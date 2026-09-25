@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>nanmi/harness</title>
+	<link rel="manifest" href="/manifest.webmanifest" />
+	<meta name="theme-color" content="#1b1a19" />
+	<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+	<link rel="apple-touch-icon" href="/icon.svg" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<script>
+		navigator.serviceWorker?.register("/sw.js").catch(() => {});
+	</script>
+	<link rel="stylesheet" href="/style.css" />
+</head>
+<body class="empty">
+	<div id="app">
+		<aside id="sidebar">
+			<div class="side-app">
+				<span class="app-name">nanmi
+					<svg class="chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+				</span>
+				<button id="btn-theme" class="icon-btn" title="切换明暗主题"></button>
+			</div>
+
+			<button id="btn-new" class="side-new">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+				新对话
+			</button>
+
+			<div class="side-section">项目</div>
+			<div id="session-list"></div>
+
+			<div class="side-bottom">
+				<button id="btn-user" class="side-row user-row" title="点按打开抽屉">
+					<span class="avatar">N</span>
+					<span>nanami</span>
+					<span class="flex-spacer"></span>
+					<span id="health" class="dot" title="服务状态"></span>
+				</button>
+			</div>
+		</aside>
+
+		<main id="main">
+			<div id="view-tabs">
+				<button data-view="chat" class="on">对话</button>
+				<button data-view="trace">轨迹</button>
+			</div>
+			<div id="stage">
+				<div id="hero" class="hidden"><h1>我们要做什么？</h1></div>
+				<div id="messages"></div>
+			</div>
+
+			<div id="trace-view" class="hidden">
+				<div id="trace-list"></div>
+				<div id="trace-detail"><div class="td-empty">选择左侧步骤查看详情</div></div>
+			</div>
+
+			<div id="composer-zone">
+				<div id="approval" class="approval hidden"></div>
+				<div id="composer-stack">
+					<div id="metrics-bar" class="metrics hidden"></div>
+					<div id="composer-card">
+						<textarea id="input" rows="1" placeholder="给 harness 一个任务…" disabled></textarea>
+					<div class="composer-row">
+							<button id="perm-chip" class="chip-btn" title="权限模式">
+								<span class="chip-ic" id="perm-ic"></span>
+								<span id="perm-label">请求批准</span>
+								<span class="chev">⌄</span>
+							</button>
+							<span class="flex-spacer"></span>
+							<button id="think-chip" class="chip-btn" title="推理强度（下一条消息生效）">
+								<span class="chip-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg></span>
+								<span id="think-label">默认</span>
+								<span class="chev">⌄</span>
+							</button>
+							<button id="model-chip" class="chip-btn" title="模型（下一条消息生效）">
+								<span id="model-label">…</span>
+								<span class="chev">⌄</span>
+							</button>
+							<button id="btn-send" class="send-circle" title="发送" disabled>
+								<svg id="icon-send" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+								<svg id="icon-stop" class="hidden" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+							</button>
+						</div>
+					</div>
+					<div id="composer-sub">
+						<button id="btn-folder" class="sub-chip">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+							<span id="folder-label">选择文件夹</span>
+						</button>
+						<span class="flex-spacer"></span>
+						<span id="session-badge" class="dim small mono"></span>
+					</div>
+				</div>
+			</div>
+		</main>
+	</div>
+
+	<div id="drawer-overlay" class="drawer-overlay hidden"></div>
+	<div id="drawer" class="drawer hidden">
+		<div class="drawer-head">nanami</div>
+		<button id="drawer-settings" class="drawer-item">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+			设置
+		</button>
+		<button id="drawer-theme" class="drawer-item"><span id="drawer-theme-icon" class="chip-ic"></span> 切换主题</button>
+		<button id="drawer-install" class="drawer-item hidden">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+			安装到本机
+		</button>
+		<div class="drawer-foot"><span class="dot health-dot"></span><span class="dim small">zai-coding-cn</span></div>
+	</div>
+
+	<div id="settings-modal" class="settings-modal hidden">
+		<div class="sm-card">
+			<div class="sm-side">
+				<div class="sm-title">设置</div>
+				<button class="sm-tab on" data-tab="general">常规</button>
+				<button class="sm-tab" data-tab="appearance">外观</button>
+				<button class="sm-tab" data-tab="model">模型</button>
+				<button class="sm-tab" data-tab="usage">使用情况</button>
+				<div class="flex-spacer"></div>
+				<button id="sm-close" class="btn-ghost sm-close">关闭</button>
+			</div>
+			<div class="sm-body">
+				<div class="sm-pane on" id="pane-general">
+					<h2>常规</h2>
+					<div class="set-card">
+						<div class="set-row">
+							<div class="set-main">
+								<div class="set-name">默认权限</div>
+								<div class="set-desc">新会话使用的权限档；当前会话可在输入框上方单独切换</div>
+							</div>
+							<select id="set-default-perm" class="bare-select set-control">
+								<option value="readonly">只读</option>
+								<option value="default" selected>请求批准</option>
+								<option value="acceptEdits">自动批准编辑</option>
+								<option value="bypass">自动批准</option>
+							</select>
+						</div>
+						<div class="set-row">
+							<div class="set-main">
+								<div class="set-name">服务</div>
+								<div class="set-desc">模型服务与监听地址</div>
+							</div>
+							<div class="set-info"><span id="set-provider" class="mono">—</span><span id="set-url" class="mono dim small"></span></div>
+						</div>
+					</div>
+				</div>
+				<div class="sm-pane" id="pane-appearance">
+					<h2>外观</h2>
+					<div class="set-card">
+						<div class="set-row">
+							<div class="set-main">
+								<div class="set-name">主题</div>
+								<div class="set-desc">跟随系统、亮色或暗色</div>
+							</div>
+							<div class="seg" id="theme-seg-modal">
+								<button data-theme-mode="system">跟随系统</button>
+								<button data-theme-mode="light">亮色</button>
+								<button data-theme-mode="dark">暗色</button>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="sm-pane" id="pane-model">
+					<div class="pm-head">
+						<h2>模型</h2>
+						<button id="pmf-btn" class="btn-ghost pm-files-btn">打开配置文件</button>
+					</div>
+					<div class="pm-sub">填入各服务商的 API 密钥即可启用其模型（<span class="mono" id="pm-cred-path-inline">~/.nanmi/credentials.yaml</span>）</div>
+					<div id="pm-files" class="pm-files hidden"></div>
+					<div id="provider-cards"></div>
+					<button id="prov-add" class="prov-add"><span class="prov-add-plus">+</span>添加自定义提供商（OpenAI 兼容端点）</button>
+					<div id="prov-add-help" class="prov-add-help hidden"></div>
+				</div>
+				<div class="sm-pane" id="pane-usage">
+					<h2>使用情况</h2>
+					<div id="usage-stats" class="usage-stats"></div>
+					<div class="chart-card">
+						<div class="chart-head">
+							<span class="set-name">Token 活动</span>
+						</div>
+						<div id="usage-heatmap" class="heatmap"></div>
+						<div id="heatmap-months" class="heatmap-months"></div>
+					</div>
+					<div class="chart-head-row">
+						<span class="set-name">每日 Token 趋势</span>
+						<div class="seg" id="usage-range">
+							<button data-range="7" class="on">近 7 日</button>
+							<button data-range="30">近 30 日</button>
+						</div>
+					</div>
+					<div class="chart-card">
+						<div id="usage-legend" class="legend"></div>
+						<div id="usage-trend"></div>
+					</div>
+					<div class="pop-label">按会话（Token 前 10）</div>
+					<div id="usage-table"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div id="project-modal" class="settings-modal hidden">
+		<div class="project-card">
+			<div class="p-head">
+				<span class="p-title">创建项目</span>
+				<button id="pm-close" class="icon-btn" title="关闭">✕</button>
+			</div>
+			<div class="p-label">项目名称</div>
+			<div class="p-name-wrap">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+				<input id="pm-name" type="text" placeholder="哥本哈根之旅" maxlength="40" />
+			</div>
+			<div class="p-label">源文件夹</div>
+			<div id="pm-selected" class="p-selected hidden"></div>
+			<div id="pm-browser" class="p-browser">
+				<div id="pm-path" class="p-browser-path mono"></div>
+				<div id="pm-dirs" class="p-dirs"></div>
+				<div class="p-browser-foot">
+					<button id="pm-up" class="sub-chip">↑ 返回上一级</button>
+					<span class="flex-spacer"></span>
+					<button id="pm-pick" class="btn-primary">选择此文件夹</button>
+				</div>
+			</div>
+			<div class="p-hint-card">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:2px"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+				<span>项目会把工作文件夹、会话与统计集中管理。隔离记忆时，该项目会话数据只保存在项目文件夹内。</span>
+			</div>
+			<div class="p-foot">
+				<select id="pm-memory" class="chip" title="记忆隔离">
+					<option value="global">默认记忆</option>
+					<option value="isolated">隔离记忆</option>
+				</select>
+				<span class="flex-spacer"></span>
+				<button id="pm-create" class="btn-primary" disabled>创建项目</button>
+			</div>
+		</div>
+	</div>
+
+	<div id="row-menu" class="popover menu hidden"></div>
+	<div id="cmenu" class="popover menu2 hidden"></div>
+	<div id="modal" class="modal hidden">
+		<div class="modal-card">
+			<div class="modal-title">重命名会话</div>
+			<input id="modal-input" type="text" maxlength="60" />
+			<div class="modal-actions">
+				<button id="modal-cancel" class="btn-ghost">取消</button>
+				<button id="modal-ok" class="btn-primary">确定</button>
+			</div>
+		</div>
+	</div>
+	<div id="toast" class="toast hidden"></div>
+
+	<script src="/vendor/marked.min.js"></script>
+	<script src="/app.js"></script>
+</body>
+</html>

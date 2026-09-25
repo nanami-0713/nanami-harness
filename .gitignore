@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.nanmi/
+*.log
+.DS_Store

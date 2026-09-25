@@ -1,0 +1,15 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "调试 smoke",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/dist/smoke.js",
+			"runtimeExecutable": "/opt/homebrew/bin/node",
+			"preLaunchTask": "npm: build",
+			"console": "integratedTerminal",
+			"skipFiles": ["<node_internals>/**"]
+		}
+	]
+}
