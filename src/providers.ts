@@ -2,9 +2,9 @@
  * 多供应商模型层（M-A）。
  *
  * Models 实例的三个合成来源：
- * 1. DEFAULT_PROVIDERS 的默认四家 provider（GLM=智谱双端点 / DeepSeek / Anthropic /
- *    OpenAI），key 走各家约定 env（ANTHROPIC_API_KEY、OPENAI_API_KEY…），从 shell
- *    env 或 ~/.nanmi/credentials.yaml 来；不穷举 pi-ai 全目录，其余走 customProviders；
+ * 1. builtinModels() 的 40 家内置 provider（anthropic/openai/deepseek/google/zai…），
+ *    key 走各家约定 env（ANTHROPIC_API_KEY、OPENAI_API_KEY…），从 shell env 或
+ *    ~/.nanmi/credentials.yaml 来；
  * 2. ~/.nanmi/config.json 的 customProviders：OpenAI 兼容端点（baseUrl + 模型表），
  *    走 createProvider + openai-completions api，注册进同一 Models 实例；
  * 3. 编程用法经 NanmiConfig.providers 直传。
@@ -15,23 +15,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
-import { zaiProvider } from "@earendil-works/pi-ai/providers/zai";
-import { zaiCodingCnProvider } from "@earendil-works/pi-ai/providers/zai-coding-cn";
-import { createModels, createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
-import type { Models, Model, Api, MutableModels, Provider } from "@earendil-works/pi-ai";
-
-/** 默认内置服务商：GLM（智谱双端点）、DeepSeek、Anthropic、OpenAI */
-const DEFAULT_PROVIDERS: Array<() => Provider> = [
-	zaiCodingCnProvider,
-	zaiProvider,
-	deepseekProvider,
-	anthropicProvider,
-	openaiProvider,
-];
+import type { Models, Model, Api, MutableModels } from "@earendil-works/pi-ai";
 
 export const NANMI_DIR = join(homedir(), ".nanmi");
 export const USER_CONFIG_FILE = join(NANMI_DIR, "config.json");
@@ -129,15 +116,12 @@ function registerCustomProvider(models: MutableModels, cp: CustomProviderConfig)
 }
 
 /**
- * 组装完整 Models：默认四家 + 自定义端点；凭据先装进 env。
+ * 组装完整 Models：内置 40 家 + 自定义端点；凭据先装进 env。
  * 每个进程装一次（模块级 guard），重复调用返回已装配实例的刷新。
  */
 export function buildModels(userConfig: UserConfig = {}): MutableModels {
 	loadCredentialsIntoEnv(userConfig.credentialsFile);
-	const models = createModels();
-	for (const factory of DEFAULT_PROVIDERS) {
-		models.setProvider(factory());
-	}
+	const models = builtinModels();
 	for (const cp of userConfig.customProviders ?? []) {
 		try {
 			registerCustomProvider(models, cp);

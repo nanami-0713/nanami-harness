@@ -25,14 +25,28 @@ const execFileAsync = promisify(execFileCb);
 
 /** 常用供应商的显示名（模型 tab 卡片用；缺省回退 providerName） */
 const PROVIDER_DISPLAY: Record<string, string> = {
-	"zai-coding-cn": "智谱 Coding", zai: "智谱开放", deepseek: "DeepSeek",
-	anthropic: "Anthropic", openai: "OpenAI",
+	"zai-coding-cn": "智谱 Coding", zai: "智谱开放", anthropic: "Anthropic", openai: "OpenAI",
+	"openai-codex": "OpenAI Codex", deepseek: "DeepSeek", google: "Google", "google-vertex": "Google Vertex",
+	"amazon-bedrock": "AWS Bedrock", "azure-openai-responses": "Azure OpenAI", groq: "Groq",
+	together: "Together", fireworks: "Fireworks", mistral: "Mistral", minimax: "MiniMax",
+	"minimax-cn": "MiniMax 国内", moonshotai: "Moonshot", "moonshotai-cn": "Moonshot 国内",
+	"kimi-coding": "Kimi Code", openrouter: "OpenRouter", xai: "xAI", "qwen-token-plan": "Qwen",
+	"qwen-token-plan-cn": "Qwen 国内", "qwen-token-plan-individual": "Qwen 个人",
+	huggingface: "HuggingFace", nvidia: "NVIDIA", cerebras: "Cerebras", baseten: "Baseten",
+	"github-copilot": "GitHub Copilot", opencode: "OpenCode", radius: "Radius", "ant-ling": "蚂蚁 Ling",
+	xiaomi: "小米", "vercel-ai-gateway": "Vercel Gateway", "cloudflare-ai-gateway": "Cloudflare Gateway",
+	"cloudflare-workers-ai": "Cloudflare Workers", "openai-responses": "OpenAI Responses",
 };
 
 /** 内置供应商 key 的 env 变量名（未配 key 时的指引；缺省按 <ID>_API_KEY 推测） */
 const PROVIDER_ENV: Record<string, string> = {
 	anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", deepseek: "DEEPSEEK_API_KEY",
-	"zai-coding-cn": "ZAI_CODING_CN_API_KEY", zai: "ZAI_API_KEY",
+	google: "GEMINI_API_KEY", groq: "GROQ_API_KEY", openrouter: "OPENROUTER_API_KEY",
+	mistral: "MISTRAL_API_KEY", together: "TOGETHER_API_KEY", xai: "XAI_API_KEY",
+	fireworks: "FIREWORKS_API_KEY", "zai-coding-cn": "ZAI_CODING_CN_API_KEY", zai: "ZAI_API_KEY",
+	"kimi-coding": "KIMI_CODE_API_KEY", moonshotai: "MOONSHOT_API_KEY", "moonshotai-cn": "MOONSHOT_API_KEY",
+	"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY", minimax: "MINIMAX_API_KEY", "minimax-cn": "MINIMAX_API_KEY",
+	togetherai: "TOGETHER_API_KEY", cerebras: "CEREBRAS_API_KEY", huggingface: "HF_API_KEY",
 };
 import type { NanmiConfig, PermissionMode } from "./types.js";
 import { SessionStore, type SessionStats } from "./session.js";
@@ -52,7 +66,7 @@ const webConfig: WebConfig = existsSync("nanmi.web.json")
 	? (JSON.parse(readFileSync("nanmi.web.json", "utf8")) as WebConfig)
 	: {};
 
-// ── 模型面（M-A）：默认四家 + ~/.nanmi/config.json 自定义端点，凭据先装 env ──
+// ── 模型面（M-A）：内置 40 家 + ~/.nanmi/config.json 自定义端点，凭据先装 env ──
 const userConfig = loadUserConfig();
 const MODELS = buildModels(userConfig);
 const PROVIDER = userConfig.defaultProvider ?? webConfig.provider ?? process.env.NANMI_PROVIDER ?? "zai-coding-cn";
