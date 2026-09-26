@@ -174,3 +174,7 @@ npm start          # 跳过构建直接启动
 安装后即独立窗口 + Dock 图标，随宿主刷新即更新。`web/sw.js` 刻意不拦截 fetch（SSE 流不能过 SW）。
 
 Electron 壳（可选，未装依赖）：`npm i -D electron` 后 `npx electron desktop/main.js`。
+
+## License
+
+MIT —— 见 [LICENSE](./LICENSE)。
