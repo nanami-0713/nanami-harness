@@ -46,6 +46,10 @@ const result = await harness.run("任务…", (event) => { /* 过程观察 */ })
 await harness.dispose();
 ```
 
+## Examples
+
+`examples/` 下每个机制一个可跑脚本（最小对话 / 权限门 / hooks 拦截 / 会话恢复 / 压缩 / MCP / 子代理），独立零依赖，逐个演示公共 API。索引与成本见 [examples/README.md](examples/README.md)。
+
 ## 多供应商 / MCP 配置 / 插件 / 电脑控制（可交付四件套）
 
 **M·多供应商**：40 家内置 provider（anthropic/openai/deepseek/google/zai…）全部免配置可用，

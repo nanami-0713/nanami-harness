@@ -71,12 +71,14 @@ const SYSTEM_PROMPT = `你是 nanmi-harness 集成测试体。用中文，简短
 	);
 }
 
-// ── 步骤 2：压缩单测（真实摘要调用 ×1）────────────────────────────────────
+// ── 步骤 2：压缩单测（真实摘要调用 ×2：独立压缩器 + 真前缀路径）────────────
 {
 	const models = buildModels();
 	const model = models.getModel(PROVIDER, MODEL_ID)!;
 	const compactor = new Compactor({ models, model, apiKey: API_KEY }, { thresholdRatio: 0.8, keepRecentTokens: 16 });
-	// 构造 8 条假历史（内容真实可摘要），keepRecent=2 → 头部 6 条应被摘要
+	// 构造 8 条假历史（内容真实可摘要），keepRecent=2 → 头部 6 条应被摘要。
+	// assistant 必须带 usage：真前缀路径会经 estimateContextTokens 读最后一条
+	// assistant 的 usage（与真实历史一致——生产中 assistant 都来自真实响应）。
 	const fake: AgentMessage[] = [];
 	for (let i = 1; i <= 4; i++) {
 		fake.push({ role: "user", content: `第${i}步：请把 config.json 里的端口改成 ${8000 + i}。`, timestamp: Date.now() } as AgentMessage);
@@ -84,6 +86,7 @@ const SYSTEM_PROMPT = `你是 nanmi-harness 集成测试体。用中文，简短
 			role: "assistant",
 			content: [{ type: "text", text: `已完成第${i}步：端口已改为 ${8000 + i}。` }],
 			timestamp: Date.now(),
+			usage: { input: 10 + i, output: 5, cacheRead: 0, totalTokens: 15 + i },
 		} as AgentMessage);
 	}
 	const compacted = await compactor.compact(fake);
@@ -95,6 +98,32 @@ const SYSTEM_PROMPT = `你是 nanmi-harness 集成测试体。用中文，简短
 		"压缩：头部摘要 + 尾部保留",
 		summaryText.includes("系统压缩") && tailKept && !summaryText.includes("摘要生成失败"),
 		`${fake.length} 条 → ${compacted.length} 条，尾部原样=${tailKept}`,
+	);
+
+	// 2b：真前缀路径 + 前导 system 保留。带 systemPrompt+tools 依赖走 streamSimple
+	// 真前缀摘要；消息数组首位放 system（pi 折叠式版本的形态），断言穿越压缩不丢。
+	const noopTool = {
+		name: "noop",
+		label: "Noop",
+		description: "测试占位工具",
+		parameters: { type: "object" as const, properties: {} },
+		execute: async () => ({ content: [{ type: "text" as const, text: "noop" }], details: {} }),
+	};
+	const prefixCompactor = new Compactor(
+		{ models, model, apiKey: API_KEY, systemPrompt: SYSTEM_PROMPT, tools: [noopTool] },
+		{ thresholdRatio: 0.8, keepRecentTokens: 16 },
+	);
+	const withSystem: AgentMessage[] = [
+		{ role: "system", content: SYSTEM_PROMPT, timestamp: 0 },
+		...fake,
+	] as AgentMessage[];
+	const compacted2 = await prefixCompactor.compact(withSystem);
+	const systemKept = compacted2[0] === withSystem[0];
+	const summary2 = JSON.stringify(compacted2.find((m) => m !== withSystem[0]));
+	record(
+		"压缩：前导 system 保留 + 真前缀摘要成功",
+		systemKept && summary2.includes("系统压缩") && !summary2.includes("摘要生成失败"),
+		`system 原样=${systemKept}（${withSystem.length} 条 → ${compacted2.length} 条）`,
 	);
 }
 

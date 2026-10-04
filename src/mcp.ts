@@ -35,6 +35,10 @@ export class McpBridge {
 				console.error(`[nanmi:mcp] server "${serverName}" 连接失败，已跳过:`, (err as Error).message);
 			}
 		}
+		// 确定性排序（参照 DSH 的 canonical order）：server 枚举顺序不受我们控制，
+		// 字典序保证跨进程 resume 时 tools 数组逐字节一致 —— tools 在请求头部
+		// system 消息里参与前缀，顺序漂移等于每次 resume 全量缓存 miss。
+		tools.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 		return tools;
 	}
 

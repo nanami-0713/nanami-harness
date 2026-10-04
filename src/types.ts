@@ -116,8 +116,8 @@ export interface NanmiConfig {
 	computer?: ComputerConfig | false;
 	mcp?: Record<string, McpServerConfig>;
 	hooks?: HookConfig;
-	/** 主循环单次 run 的超时保险丝，默认 180s */
-	timeoutMs?: number;
+	/** 空闲保险丝：模型完全无输出且无在途动作持续这么久才中止，默认 300s。不设总时长上限（长思考是健康行为） */
+	idleTimeoutMs?: number;
 }
 
 export interface RunResult {

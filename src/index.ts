@@ -13,7 +13,7 @@
  */
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { MutableModels } from "@earendil-works/pi-ai";
+import type { MutableModels, ImageContent } from "@earendil-works/pi-ai";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { buildModels, loadUserConfig } from "./providers.js";
 import type { UserConfig } from "./providers.js";
@@ -40,10 +40,12 @@ export { createJevTool, type JevCallDetails } from "./tools-jev.js";
 export { createComputerTool, type ComputerDetails } from "./tools-computer.js";
 export { SessionStore, type SessionMeta } from "./session.js";
 export { PermissionGate } from "./permissions.js";
+export { Compactor, contextWindowOf } from "./compaction.js";
 export { resolveApiKey } from "./key.js";
 
 const DEFAULT_SESSION_DIR = ".nanmi/sessions";
-const DEFAULT_RUN_TIMEOUT_MS = 180_000;
+/** 空闲保险丝：模型完全无输出且无在途动作持续这么久才判死（有活动就重置，无总时长上限） */
+const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
 
 export class NanmiHarness {
 	readonly sessionId?: string;
@@ -59,7 +61,21 @@ export class NanmiHarness {
 	private readonly modelHolder: { current: Model<Api> };
 	private readonly scopedGetApiKey: (() => string | undefined) | undefined;
 	private apiKey?: string;
-	private readonly runTimeoutMs: number;
+	private readonly idleTimeoutMs: number;
+	// 空闲看门狗状态：lastActivity=最后一次模型/工具活动；openActions=在途工具数；paused=人工交互挂起计数
+	private idleLastActivity = 0;
+	private idleOpenActions = 0;
+	private idlePaused = 0;
+
+	/** 人工交互（如等审批裁决）期间挂起空闲看门狗；恢复时重置计时 */
+	pauseActivityWatchdog(): void {
+		this.idlePaused++;
+	}
+
+	resumeActivityWatchdog(): void {
+		this.idlePaused = Math.max(0, this.idlePaused - 1);
+		this.idleLastActivity = Date.now();
+	}
 
 	private constructor(
 		agent: Agent,
@@ -73,7 +89,7 @@ export class NanmiHarness {
 			hooks: HookRunner;
 			mcp?: McpBridge;
 			gate: PermissionGate;
-			runTimeoutMs: number;
+			idleTimeoutMs: number;
 		},
 	) {
 		this.agent = agent;
@@ -86,7 +102,7 @@ export class NanmiHarness {
 		this.hooks = deps.hooks;
 		this.mcp = deps.mcp;
 		this.gate = deps.gate;
-		this.runTimeoutMs = deps.runTimeoutMs;
+		this.idleTimeoutMs = deps.idleTimeoutMs;
 		this.sessionId = deps.session?.id;
 	}
 
@@ -215,7 +231,8 @@ export class NanmiHarness {
 		// ── 压缩器（挂在 prepareNextTurnWithContext）─────────────────────────
 		const compactionConfig = config.compaction === false ? undefined : config.compaction;
 		const compactor = compactionConfig === undefined && config.compaction === false ? undefined : new Compactor(
-			{ models, model, getModel: () => modelHolder.current, getApiKey: scopedGetApiKey },
+			// systemPrompt + tools 供真前缀摘要请求逐字节复用主对话前缀（KV cache 命中）
+			{ models, model, getModel: () => modelHolder.current, getApiKey: scopedGetApiKey, systemPrompt, tools },
 			{
 				thresholdRatio: compactionConfig?.thresholdRatio ?? 0.8,
 				keepRecentTokens: compactionConfig?.keepRecentTokens ?? 20_000,
@@ -265,7 +282,7 @@ export class NanmiHarness {
 			hooks,
 			mcp,
 			gate: permission,
-			runTimeoutMs: config.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+			idleTimeoutMs: config.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
 		});
 	}
 
@@ -343,29 +360,41 @@ export class NanmiHarness {
 	/**
 	 * 跑一轮对话（可能内含多次工具调用与压缩），阻塞到 agent 空闲。
 	 * onEvent 是过程观察口；结束后按序落盘会话、触发 runEnd 钩子。
+	 * images 走 pi-agent 原生 image block（base64 裸串，随 UserMessage 落盘）。
+	 *
+	 * 中止判据是**空闲**而非总时长：模型有任何输出（思考/正文 delta）或工具在途
+	 * 就一直活着——最高思考档的长思考不该被总上限误杀；完全静止超过 idleTimeoutMs
+	 * （默认 300s）才中止，等审批裁决期间计时挂起。
 	 */
-	async run(prompt: string, onEvent?: (event: AgentEvent) => void): Promise<RunResult> {
+	async run(prompt: string, onEvent?: (event: AgentEvent) => void, images?: ImageContent[]): Promise<RunResult> {
 		const events: AgentEvent[] = [];
 		let text = "";
-		let abortedByTimeout = false;
+		let idleAborted = false;
 		const countAtRunStart = this.agent.state.messages.length;
 		// 工具参数只在 start 事件里出现，先记账，postToolCall 钩子要用
 		const argsByCallId = new Map<string, unknown>();
+		this.idleLastActivity = Date.now();
+		this.idleOpenActions = 0;
 
-		const timer = setTimeout(() => {
-			abortedByTimeout = true;
+		const idleTimer = setInterval(() => {
+			if (this.idleOpenActions > 0 || this.idlePaused > 0) return; // 工具在途/等人工裁决：不算空闲
+			if (Date.now() - this.idleLastActivity < this.idleTimeoutMs) return;
+			idleAborted = true;
 			this.agent.abort();
-		}, this.runTimeoutMs);
+		}, 5_000);
 
 		const off = this.agent.subscribe((event) => {
 			events.push(event);
+			this.idleLastActivity = Date.now(); // 任何事件都是"模型还在动"的证据
 			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 				text += event.assistantMessageEvent.delta;
 			}
 			if (event.type === "tool_execution_start") {
+				this.idleOpenActions++;
 				argsByCallId.set(event.toolCallId, event.args);
 			}
 			if (event.type === "tool_execution_end") {
+				this.idleOpenActions = Math.max(0, this.idleOpenActions - 1);
 				void this.hooks.runPostTool({
 					toolName: event.toolName,
 					args: argsByCallId.get(event.toolCallId),
@@ -376,12 +405,16 @@ export class NanmiHarness {
 		});
 
 		try {
-			await this.agent.prompt(prompt);
+			await this.agent.prompt(prompt, images);
 		} catch (err) {
-			if (abortedByTimeout) throw new Error(`run 超时（>${this.runTimeoutMs}ms），已强制中止`);
+			if (idleAborted) {
+				throw new Error(
+					`模型 ${Math.round(this.idleTimeoutMs / 1000)} 秒无任何输出与动作，已中止（多为上游或网络停摆），可直接重发`,
+				);
+			}
 			throw err;
 		} finally {
-			clearTimeout(timer);
+			clearInterval(idleTimer);
 			off();
 		}
 

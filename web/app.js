@@ -25,6 +25,12 @@ const state = {
 	menuFor: null,
 	themeMode: localStorage.getItem("nanmi-theme-mode") ?? "system",
 	stick: true, // 贴底跟随：用户滚离底部时置 false，流式更新不再拽动视口
+	pendingImages: [], // 待发送图片：{data(base64), mimeType, name?, loading?}
+	runStartTs: 0, // 本轮 run 起始时刻（客户端口径，驱动"已运行 xx 秒"）
+	runTimerId: null,
+	runArtifacts: new Map(), // 本轮 write/edit 产出：path → {path, op, add, del}
+	artifactsEl: null, // 流式期间的产出卡元素
+	lastEventAt: 0, // 最近一次 SSE 事件/连接成功时刻（驱动假死看门狗）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -97,19 +103,45 @@ function md(text) {
 
 // ── 渲染：消息快照（权威态）─────────────────────────────────────────────────
 function renderAll(forceScroll = true) {
-	$("messages").replaceChildren();
+	const stage = $("messages");
+	stage.replaceChildren();
+	stopRunElapsed(); // 指示器随消息区重建，计时器一并撤掉（重新运行时会重挂）
 	state.tools.clear();
 	state.streamEl = null;
+	state.artifactsEl = null;
+	state.runArtifacts = new Map();
 	document.body.classList.toggle("empty", state.messages.length === 0);
 	$("hero").classList.toggle("hidden", state.messages.length > 0);
-	for (const m of state.messages) renderMessage(m);
+	// 轮次感知：user 消息是分隔符；每轮的 write/edit 汇成"产出卡"插在轮末
+	let map = new Map();
+	let turnLast = null;
+	for (const m of state.messages) {
+		if (m.role === "user" && turnLast) {
+			flushArtifacts(map, turnLast);
+			map = new Map();
+		}
+		if (m.role === "assistant") {
+			for (const b of m.content ?? []) {
+				if (b.type === "toolCall") collectArtifact(map, b.name, b.arguments);
+			}
+		}
+		renderMessage(m);
+		if (stage.lastElementChild) turnLast = stage.lastElementChild;
+	}
+	if (turnLast) flushArtifacts(map, turnLast);
 	scrollDown(forceScroll);
 }
 
 function renderMessage(m) {
 	if (m.role === "user") {
+		const wrap = el("div", "msg user");
 		const text = typeof m.content === "string" ? m.content : blocksToText(m.content);
-		$("messages").append(el("div", "msg user", text));
+		if (text) wrap.append(el("div", "msg-user-text", text));
+		appendUserImages(wrap, blocksToImages(m.content));
+		if (wrap.childNodes.length) {
+			wrap.append(msgActions("user", m, wrap));
+			$("messages").append(wrap);
+		}
 		return;
 	}
 	if (m.role === "assistant") {
@@ -119,6 +151,7 @@ function renderMessage(m) {
 			if (block.type === "text" && block.text?.trim()) wrap.append(md(block.text));
 			if (block.type === "toolCall") wrap.append(toolCard(block.id, block.name, block.arguments, null, false, null));
 		}
+		wrap.append(msgActions("assistant", m, wrap));
 		$("messages").append(wrap);
 		return;
 	}
@@ -139,6 +172,277 @@ function blocksToText(content) {
 function blocksToImages(content) {
 	if (typeof content === "string") return [];
 	return (content ?? []).filter((b) => b.type === "image" && b.data).map((b) => ({ data: b.data, mimeType: b.mimeType ?? "image/png" }));
+}
+
+/** 用户气泡里的图片块渲染（发送的乐观气泡与历史快照共用） */
+function appendUserImages(wrap, images) {
+	for (const img of images) {
+		const im = el("img", "tool-img user-img");
+		im.src = `data:${img.mimeType};base64,${img.data}`;
+		im.alt = "";
+		im.onclick = () => window.open(im.src);
+		wrap.append(im);
+	}
+}
+
+// ── 图片附件（附件按钮 / 粘贴 / 拖入）──────────────────────────────────────
+const IMAGE_MAX_EDGE = 1280; // 与电脑控制截图同参数
+const IMAGE_MAX_COUNT = 6;
+
+/** 当前模型是否支持视觉输入（反查 /api/models 已缓存的 input 字段） */
+function currentModelSupportsImage() {
+	const p = (state.modelProviders ?? []).find((pr) => pr.provider === state.provider);
+	if (!p) return true; // 能力未知时不设卡
+	const m = (p.models ?? []).find((mm) => mm.id === state.modelId);
+	return !m || (m.input ?? []).includes("image");
+}
+
+/** 已完成编码、可随消息发送的图片 */
+function readyImages() {
+	return state.pendingImages.filter((img) => !img.loading && img.data);
+}
+
+/** 图片文件 → ImageContent：canvas 重编码（最长边 1280、JPEG q0.85，剥 EXIF；GIF 取首帧） */
+function fileToImageContent(file) {
+	return new Promise((resolve, reject) => {
+		const url = URL.createObjectURL(file);
+		const img = new Image();
+		img.onload = () => {
+			URL.revokeObjectURL(url);
+			try {
+				const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+				const w = Math.max(1, Math.round(img.naturalWidth * scale));
+				const h = Math.max(1, Math.round(img.naturalHeight * scale));
+				const canvas = document.createElement("canvas");
+				canvas.width = w;
+				canvas.height = h;
+				canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+				const dataURL = canvas.toDataURL("image/jpeg", 0.85);
+				resolve({ data: dataURL.slice(dataURL.indexOf(",") + 1), mimeType: "image/jpeg", name: file.name });
+			} catch (err) {
+				reject(err);
+			}
+		};
+		img.onerror = () => {
+			URL.revokeObjectURL(url);
+			reject(new Error("图片解码失败"));
+		};
+		img.src = url;
+	});
+}
+
+function addPendingImages(files) {
+	const list = [...files].filter((f) => f.type.startsWith("image/"));
+	if (!list.length) return;
+	if (!currentModelSupportsImage()) {
+		toast("当前模型不支持图片输入，请切到带「视觉」标签的模型");
+		return;
+	}
+	for (const f of list) {
+		if (state.pendingImages.length >= IMAGE_MAX_COUNT) {
+			toast(`最多附带 ${IMAGE_MAX_COUNT} 张图片`);
+			break;
+		}
+		const placeholder = { name: f.name, loading: true };
+		state.pendingImages.push(placeholder);
+		fileToImageContent(f)
+			.then((img) => Object.assign(placeholder, img, { loading: false }))
+			.catch((err) => {
+				const i = state.pendingImages.indexOf(placeholder);
+				if (i >= 0) state.pendingImages.splice(i, 1);
+				toast(`${f.name}：${err.message}`);
+			})
+			.finally(renderAttachStrip);
+	}
+	renderAttachStrip();
+}
+
+function renderAttachStrip() {
+	const strip = $("attach-strip");
+	strip.classList.toggle("hidden", state.pendingImages.length === 0);
+	strip.classList.toggle("warn", state.pendingImages.length > 0 && !currentModelSupportsImage());
+	strip.replaceChildren();
+	state.pendingImages.forEach((img, i) => {
+		const cell = el("div", "attach-cell");
+		if (img.loading) cell.append(el("div", "attach-thumb attach-loading"));
+		else {
+			const im = el("img", "attach-thumb");
+			im.src = `data:${img.mimeType};base64,${img.data}`;
+			im.alt = img.name ?? "";
+			cell.append(im);
+		}
+		const x = el("button", "attach-x", "✕");
+		x.title = "移除";
+		x.onclick = () => {
+			state.pendingImages.splice(i, 1);
+			renderAttachStrip();
+		};
+		cell.append(x);
+		strip.append(cell);
+	});
+	if (state.pendingImages.length) {
+		const hint = currentModelSupportsImage() ? "" : " · 当前模型不支持图片";
+		strip.append(el("span", "attach-hint", `${state.pendingImages.length} 张${hint}`));
+	}
+	updateSendEnabled();
+}
+
+function updateAttachVisibility() {
+	$("btn-attach").classList.toggle("hidden", !currentModelSupportsImage());
+}
+
+function updateSendEnabled() {
+	if (state.running) return;
+	const blockedByGate = state.pendingImages.length > 0 && !currentModelSupportsImage();
+	$("btn-send").disabled = blockedByGate || (!$("input").value.trim() && readyImages().length === 0);
+}
+
+// ── 消息 hover 操作条（复制 / 赞踩 / 分支）─────────────────────────────────
+const ICON_COPY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const ICON_THUMB_UP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>';
+const ICON_THUMB_DOWN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>';
+const ICON_BRANCH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
+
+function actionBtn(icon, title, onclick) {
+	const b = el("button", "icon-btn msg-act");
+	b.innerHTML = icon;
+	b.title = title;
+	b.onclick = (e) => {
+		e.stopPropagation();
+		onclick(b);
+	};
+	return b;
+}
+
+function feedbackKey(m) {
+	return `nanmi-fb:${state.sessionId}:${m.timestamp}`;
+}
+
+function paintFeedback(bar, m) {
+	const cur = localStorage.getItem(feedbackKey(m)) ?? "";
+	for (const b of bar.querySelectorAll("[data-fb]")) b.classList.toggle("fb-on", b.dataset.fb === cur);
+}
+
+function msgActions(kind, m, wrap) {
+	const bar = el("div", `msg-actions act-${kind}`);
+	if (kind === "user") {
+		bar.append(
+			actionBtn(ICON_COPY, "复制", () => {
+				const t = wrap.querySelector(".msg-user-text");
+				copyText((t ? t.textContent : wrap.textContent) ?? "", "已复制");
+			}),
+		);
+		return bar;
+	}
+	bar.append(actionBtn(ICON_COPY, "复制", () => copyText(blocksToText(m.content), "已复制")));
+	for (const [val, icon, label] of [["up", ICON_THUMB_UP, "赞"], ["down", ICON_THUMB_DOWN, "踩"]]) {
+		const fbBtn = actionBtn(icon, label, () => {
+			const key = feedbackKey(m);
+			localStorage.setItem(key, localStorage.getItem(key) === val ? "" : val);
+			paintFeedback(bar, m);
+		});
+		fbBtn.dataset.fb = val;
+		bar.append(fbBtn);
+	}
+	paintFeedback(bar, m);
+	bar.append(
+		actionBtn(ICON_BRANCH, "以这条回复为终点创建分支会话", async () => {
+			if (state.running) {
+				toast("本轮运行结束后再分支");
+				return;
+			}
+			try {
+				const data = await post("/api/sessions/fork", { sessionId: state.sessionId, timestamp: m.timestamp });
+				adopt(data);
+				refreshSessions();
+				toastMinor(`已分支到新会话 ${data.sessionId}`);
+			} catch (err) {
+				toast(err.message);
+			}
+		}),
+	);
+	return bar;
+}
+
+// ── 本轮产出/更改卡片（write/edit 工具汇总，ZCode 风）──────────────────────
+function countLines(s) {
+	return String(s ?? "").split("\n").filter((l) => l.trim() !== "").length;
+}
+
+/** 把一次 write/edit 工具调用并入产出汇总（同路径合并；write 以最后一次内容为准） */
+function collectArtifact(map, name, args) {
+	if (!args || (name !== "write" && name !== "edit")) return;
+	const path = String(args.path ?? "");
+	if (!path) return;
+	const cur = map.get(path) ?? { path, op: "修改", add: 0, del: 0 };
+	if (name === "write") {
+		cur.op = "写入";
+		cur.add = countLines(args.content);
+		cur.del = 0;
+	} else {
+		for (const ed of args.edits ?? []) {
+			cur.add += countLines(ed.newText);
+			cur.del += countLines(ed.oldText);
+		}
+	}
+	map.set(path, cur);
+}
+
+function artifactsCard(entries) {
+	const card = el("div", "artifacts");
+	const head = el("div", "artifacts-head");
+	head.append(el("span", "caret", "▶"));
+	const add = entries.reduce((s, e) => s + e.add, 0);
+	const del = entries.reduce((s, e) => s + e.del, 0);
+	const title = el("span", "artifacts-title", `${entries.length} 个文件已更改`);
+	if (add) title.append(el("span", "diff-add", ` +${add}`));
+	if (del) title.append(el("span", "diff-del", ` -${del}`));
+	head.append(title);
+	head.onclick = () => card.classList.toggle("open");
+	card.append(head);
+	const body = el("div", "artifacts-body");
+	for (const e of entries) {
+		const row = el("div", "artifacts-row");
+		row.title = `${e.path}（点击复制路径）`;
+		row.append(el("span", "artifacts-op", e.op));
+		const p = el("span", "artifacts-path");
+		const idx = e.path.lastIndexOf("/");
+		if (idx >= 0) {
+			p.append(el("span", "dim", e.path.slice(0, idx + 1)));
+			p.append(el("span", null, e.path.slice(idx + 1)));
+		} else {
+			p.append(el("span", null, e.path));
+		}
+		row.append(p);
+		const st = el("span", "artifacts-diff");
+		if (e.add) st.append(el("span", "diff-add", `+${e.add}`));
+		if (e.del) st.append(el("span", "diff-del", `-${e.del}`));
+		row.append(st);
+		row.onclick = () => copyText(e.path, "已复制路径");
+		body.append(row);
+	}
+	card.append(body);
+	return card;
+}
+
+/** 流式期间的实时产出卡（挂在流式气泡之后，run_end 重绘后由快照路径接管） */
+function renderArtifactsLive() {
+	const entries = [...state.runArtifacts.values()];
+	if (!entries.length) return;
+	const fresh = artifactsCard(entries);
+	if (state.artifactsEl) state.artifactsEl.replaceWith(fresh);
+	else if (state.streamEl) state.streamEl.after(fresh);
+	else $("messages").append(fresh);
+	state.artifactsEl = fresh;
+}
+
+/** 快照路径：把一轮的产出卡插到轮末锚点之后 */
+function flushArtifacts(map, anchor) {
+	const entries = [...map.values()];
+	if (!entries.length || !anchor) return;
+	const card = artifactsCard(entries);
+	if (anchor.nextSibling) anchor.parentNode.insertBefore(card, anchor.nextSibling);
+	else anchor.parentNode.append(card);
 }
 
 /** 思维链折叠块，默认展开（static 渲染与流式共用样式） */
@@ -320,24 +624,64 @@ $("stage").addEventListener("scroll", () => {
 	state.stick = isNearBottom($("stage"));
 });
 
-// ── SSE ─────────────────────────────────────────────────────────────────────
+// ── SSE（带自愈：onerror 重开 + 假死看门狗 + 断档对账）─────────────────────
+let sseRetryTimer = null;
+let sseFailures = 0;
+let gapResyncTimer = null;
+
 function openSSE() {
 	state.es?.close();
+	if (sseRetryTimer) { clearTimeout(sseRetryTimer); sseRetryTimer = null; }
 	if (!state.sessionId) return;
 	const es = new EventSource(`/api/events?sessionId=${state.sessionId}&since=${state.lastSeq}`);
 	state.es = es;
+	state.lastEventAt = Date.now();
+	es.onopen = () => {
+		sseFailures = 0;
+		resync().catch(() => {}); // 连接(重)建成功即对账：校正 running 状态、补齐断线期间的消息
+	};
 	es.onmessage = (e) => {
+		state.lastEventAt = Date.now();
 		let evt;
 		try { evt = JSON.parse(e.data); } catch { return; }
-		if (evt.seq <= state.lastSeq) return;
-		state.lastSeq = evt.seq;
+		if (evt.type === "ping") return;
+		if (typeof evt.seq === "number") {
+			if (evt.seq > state.lastSeq + 1) scheduleGapResync(); // 中间丢过事件(环溢出等)：拉权威快照补齐
+			if (evt.seq <= state.lastSeq) return;
+			state.lastSeq = evt.seq;
+		}
 		handleEvent(evt);
 	};
+	es.onerror = () => {
+		// 浏览器对网络错误会自动重连(CONNECTING)，不用管；
+		// 对 HTTP 错误(如服务端重启后 404)会永久放弃(CLOSED)——必须自己重开，
+		// 服务端 /api/events 已支持自动复活会话，重开即自愈。
+		if (es.readyState === EventSource.CLOSED) {
+			sseFailures++;
+			if (sseFailures > 6) {
+				toast("与会话的连接已丢失且无法恢复，请刷新页面");
+				return;
+			}
+			if (sseRetryTimer) clearTimeout(sseRetryTimer);
+			sseRetryTimer = setTimeout(() => openSSE(), Math.min(1000 * sseFailures, 15_000));
+		}
+	};
+}
+
+/** 事件序号断档：说明中间丢过事件，防抖拉一次权威快照 */
+function scheduleGapResync() {
+	if (gapResyncTimer) return;
+	gapResyncTimer = setTimeout(() => {
+		gapResyncTimer = null;
+		resync().catch(() => {});
+	}, 800);
 }
 
 function handleEvent(evt) {
 	switch (evt.type) {
 		case "run_start":
+			state.runArtifacts = new Map();
+			state.artifactsEl = null;
 			setRunning(true);
 			break;
 		case "agent":
@@ -399,12 +743,18 @@ function handleAgentEvent(e) {
 			if (!state.streamEl) streamBegin();
 			state.cursorEl?.remove();
 			state.streamEl.append(toolCard(e.toolCallId, e.toolName, e.args, null, null, true));
+			const entry = state.tools.get(e.toolCallId);
+			if (entry) entry.args = e.args; // 产出卡要用 write/edit 的路径与内容
 			setRunStatus(`调用 ${e.toolName}`);
 			scrollDown();
 			break;
 		}
 		case "tool_execution_end": {
 			state.tools.get(e.toolCallId)?.update(tryExtractText(e.result), e.isError, blocksToImages(e.result?.content));
+			if (!e.isError) {
+				collectArtifact(state.runArtifacts, e.toolName, state.tools.get(e.toolCallId)?.args);
+				renderArtifactsLive();
+			}
 			setRunStatus("整合结果");
 			scheduleTraceRefresh();
 			break;
@@ -619,6 +969,8 @@ function syncModelSelect(modelId) {
 	if (!modelId) return;
 	state.modelId = modelId;
 	$("model-label").textContent = modelId;
+	updateAttachVisibility();
+	if (state.pendingImages.length) renderAttachStrip();
 }
 
 
@@ -1401,6 +1753,8 @@ async function resync() {
 	state.messages = data.messages;
 	state.cwd = data.cwd;
 	state.lastSeq = Math.max(state.lastSeq, data.seq);
+	// 运行状态对账：SSE 断线/服务端重启可能让我们错过 run_end/run_start
+	if (typeof data.running === "boolean" && data.running !== state.running) setRunning(data.running);
 	streamEnd();
 	renderAll(false); // run 结束：只刷新数据，不拽动用户当前视口
 	updateProjectUI();
@@ -1411,7 +1765,8 @@ function setRunning(run) {
 	const btn = $("btn-send");
 	btn.classList.toggle("stop", run);
 	btn.title = run ? "停止" : "发送";
-	btn.disabled = run ? false : !$("input").value.trim();
+	if (run) btn.disabled = false;
+	else updateSendEnabled();
 	$("icon-send").classList.toggle("hidden", run);
 	$("icon-stop").classList.toggle("hidden", !run);
 	$("input").disabled = false;
@@ -1423,11 +1778,16 @@ function setRunning(run) {
 			const dots = el("span", "run-ellipsis");
 			dots.append(el("i"), el("i"), el("i"));
 			ind.append(el("span", "run-text", "运行中"), dots);
+			const elapsed = el("span", "run-elapsed");
+			elapsed.id = "run-elapsed";
+			ind.append(elapsed);
 			$("messages").append(ind);
 			scrollDown();
 		}
 		setRunStatus("运行中");
+		startRunElapsed();
 	} else {
+		stopRunElapsed();
 		$("run-ind")?.remove();
 	}
 }
@@ -1438,19 +1798,67 @@ function setRunStatus(text) {
 	if (t) t.textContent = text;
 }
 
+/** 已运行计时：每秒刷新一次，给用户对耗时的即时感知 */
+function startRunElapsed() {
+	stopRunElapsed();
+	state.runStartTs = Date.now();
+	const paint = () => {
+		const t = $("run-elapsed");
+		if (t) t.textContent = formatRunElapsed(Date.now() - state.runStartTs);
+	};
+	paint();
+	state.runTimerId = setInterval(paint, 1000);
+}
+
+function stopRunElapsed() {
+	if (state.runTimerId) {
+		clearInterval(state.runTimerId);
+		state.runTimerId = null;
+	}
+}
+
+function formatRunElapsed(ms) {
+	const s = Math.floor(ms / 1000);
+	if (s < 60) return `已运行 ${s} 秒`;
+	return `已运行 ${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+}
+
 // ── 发送 / 停止 ─────────────────────────────────────────────────────────────
 async function send() {
 	const input = $("input");
 	const prompt = input.value.trim();
-	if (!prompt || state.running) return;
+	const images = readyImages();
+	if (state.running) {
+		// 运行状态可能因 SSE 断线错过 run_end 而卡住：对账一次而不是静默丢弃输入
+		resync().catch(() => {});
+		toast("上一轮还在运行，已为你刷新状态");
+		return;
+	}
+	if (!prompt && images.length === 0) return;
+	if (images.length > 0 && !currentModelSupportsImage()) {
+		toast("当前模型不支持图片输入，请切到带「视觉」标签的模型");
+		return;
+	}
 	input.value = "";
 	autoGrow();
-	$("messages").append(el("div", "msg user", prompt));
+	const sent = [...state.pendingImages];
+	state.pendingImages = [];
+	renderAttachStrip();
+	// 乐观气泡：文本 + 缩略图（run_end 后由权威快照重绘接管）
+	const bubble = el("div", "msg user");
+	if (prompt) bubble.append(el("div", "msg-user-text", prompt));
+	appendUserImages(bubble, images);
+	$("messages").append(bubble);
 	scrollDown(true); // 用户主动发送：强制回到底部
 	try {
-		await post("/api/run", { sessionId: state.sessionId, prompt });
+		await post("/api/run", { sessionId: state.sessionId, prompt, images: images.map(({ data, mimeType }) => ({ data, mimeType })) });
 	} catch (err) {
 		toast(err.message);
+		// 发送失败：图文退还，不丢内容
+		state.pendingImages.push(...sent);
+		renderAttachStrip();
+		input.value = prompt;
+		autoGrow();
 	}
 }
 
@@ -1511,7 +1919,39 @@ async function boot() {
 	});
 	$("input").addEventListener("input", () => {
 		autoGrow();
-		if (!state.running) $("btn-send").disabled = !$("input").value.trim();
+		if (!state.running) updateSendEnabled();
+	});
+	// 图片附件：按钮 / 粘贴 / 拖入
+	$("btn-attach").onclick = () => $("attach-file").click();
+	$("attach-file").addEventListener("change", () => {
+		addPendingImages($("attach-file").files);
+		$("attach-file").value = "";
+	});
+	$("input").addEventListener("paste", (e) => {
+		const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+		if (files.length) {
+			e.preventDefault();
+			addPendingImages(files);
+		}
+	});
+	const card = $("composer-card");
+	card.addEventListener("dragover", (e) => {
+		e.preventDefault();
+		card.classList.add("dragging");
+	});
+	card.addEventListener("dragleave", () => card.classList.remove("dragging"));
+	card.addEventListener("drop", (e) => {
+		e.preventDefault();
+		card.classList.remove("dragging");
+		if (e.dataTransfer?.files?.length) addPendingImages(e.dataTransfer.files);
+	});
+	// SSE 假死看门狗：连接显示 OPEN 但 50 秒没有任何事件（心跳停了）→ 主动重开
+	setInterval(() => {
+		if (state.es && state.es.readyState === 1 && Date.now() - (state.lastEventAt || 0) > 50_000) openSSE();
+	}, 10_000);
+	// 切回前台（合盖唤醒/切标签回来）即对账一次：补运行状态与漏掉的消息
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "visible" && state.sessionId) resync().catch(() => {});
 	});
 	$("perm-chip").onclick = (e) => { e.stopPropagation(); openPermMenu(); };
 	$("model-chip").onclick = (e) => { e.stopPropagation(); openModelMenu().catch(toast); };

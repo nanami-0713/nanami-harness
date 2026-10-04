@@ -143,7 +143,12 @@ function makeWebAsker(reg: SessionReg) {
 		const requestId = randomUUID();
 		emit(reg, { type: "permission_request", requestId, toolName, reason, args });
 		console.log(`[web] 审批请求 ${toolName}（${requestId.slice(0, 8)}）等待浏览器裁决`);
-		return new Promise((resolve) => reg.pendingApprovals.set(requestId, resolve));
+		reg.harness.pauseActivityWatchdog(); // 人在裁决：空闲看门狗不计时
+		try {
+			return await new Promise((resolve) => reg.pendingApprovals.set(requestId, resolve));
+		} finally {
+			reg.harness.resumeActivityWatchdog();
+		}
 	};
 }
 
@@ -173,6 +178,7 @@ async function createSession(opts: {
 		permission: { mode: runtimeSettings.defaultPermissionMode, asker: undefined! }, // asker 在下方注入（需要 reg）
 		compaction: webConfig.compaction === false ? false : (webConfig.compaction ?? {}),
 		mcp: webConfig.mcp,
+		...(webConfig.idleTimeoutMs ? { idleTimeoutMs: webConfig.idleTimeoutMs } : {}),
 		cwd,
 		session: { dir: sessionDir, ...(opts.resumeId ? { resumeId: opts.resumeId } : {}) },
 	};
@@ -430,9 +436,82 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 		});
 	}
 
+	// POST /api/sessions/fork {sessionId, timestamp} —— 以某条回复为终点复制出新会话（分支）
+	if (pathname === "/api/sessions/fork" && req.method === "POST") {
+		const srcReg = sessions.get(String(body.sessionId ?? ""));
+		if (!srcReg) return json(res, 404, { error: "会话不存在或未加载" });
+		const ts = Number(body.timestamp);
+		const msgs = srcReg.harness.snapshotMessages();
+		let cut = -1;
+		for (let i = 0; i < msgs.length; i++) {
+			if (msgs[i].role === "assistant" && Number(msgs[i].timestamp) === ts) cut = i;
+		}
+		if (cut < 0) return json(res, 400, { error: "找不到分支点（消息可能已被压缩重写）" });
+		const sliced = msgs.slice(0, cut + 1);
+		const srcStore = srcReg.harness.sessionStore!;
+		const srcMeta = srcStore.metaSnapshot;
+		const newId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+		// 写物理日志 + sidecar 元数据，然后走与"恢复会话"完全相同的加载链路
+		writeFileSync(
+			join(srcStore.dir, `${newId}.jsonl`),
+			sliced.map((m) => JSON.stringify({ k: "msg", m })).join("\n") + "\n",
+		);
+		writeFileSync(
+			join(srcStore.dir, `${newId}.meta.json`),
+			JSON.stringify(
+				{
+					...srcMeta,
+					id: newId,
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+					messageCount: sliced.length,
+					viewCount: sliced.length,
+					physicalCount: sliced.length,
+					title: srcMeta.title ? `分支：${srcMeta.title}` : "分支会话",
+					titleSource: "user",
+					stats: undefined,
+				},
+				null,
+				2,
+			),
+		);
+		const forkReg = await createSession({
+			resumeId: newId,
+			cwd: srcMeta.cwd,
+			isolateMemory: srcStore.dir !== SESSION_DIR,
+		});
+		emit(forkReg, { type: "sessions_changed" });
+		const forkMeta = forkReg.harness.sessionStore?.metaSnapshot;
+		return json(res, 200, {
+			sessionId: forkReg.id,
+			resumed: true,
+			permissionMode: forkReg.harness.permissionMode,
+			cwd: forkMeta?.cwd ?? process.cwd(),
+			modelId: forkReg.harness.modelId,
+			thinkingLevel: forkReg.harness.thinkingLevel,
+			project: forkMeta?.project,
+			isolated: forkReg.harness.sessionStore ? forkReg.harness.sessionStore.dir !== SESSION_DIR : false,
+			sessionDir: forkReg.harness.sessionStore?.dir ?? SESSION_DIR,
+			messages: forkReg.harness.snapshotMessages(),
+			seq: forkReg.seq,
+		});
+	}
+
 	// 其余端点都要带 sessionId（查询串或 POST body 均可）
 	const sessionId = url.searchParams.get("sessionId") ?? body.sessionId ?? null;
-	const reg = sessionId ? sessions.get(sessionId) : undefined;
+	let reg = sessionId ? sessions.get(sessionId) : undefined;
+	if (!reg && sessionId && (pathname === "/api/run" || pathname === "/api/events")) {
+		// 僵尸页面自愈：服务端重启后，旧页面直接发消息/重连事件流时自动复活会话而非 404
+		// （仅全局库可查；项目隔离会话的目录无从反查，仍走 404）
+		const known = SessionStore.list(SESSION_DIR).find((m) => m.id === sessionId);
+		if (known) {
+			try {
+				reg = await createSession({ resumeId: sessionId, cwd: known.cwd });
+			} catch {
+				/* 复活失败按原 404 处理 */
+			}
+		}
+	}
 	if (!reg) {
 		return json(res, 404, { error: "会话不存在或未加载" });
 	}
@@ -576,21 +655,30 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 		}
 		reg!.sseClients.add(res);
 		req.on("close", () => reg!.sseClients.delete(res));
-		const heartbeat = setInterval(() => res.write(": ping\n\n"), 15_000);
+		const heartbeat = setInterval(() => res.write('data: {"type":"ping"}\n\n'), 15_000); // 真实事件：前端看门狗靠它识别假死连接
 		req.on("close", () => clearInterval(heartbeat));
 		return;
 	}
 
-	// POST /api/run {prompt}
+	// POST /api/run {prompt, images?: [{data, mimeType}]}
 	if (pathname === "/api/run" && req.method === "POST") {
 		const prompt = String(body.prompt ?? "").trim();
 		if (!prompt) return json(res, 400, { error: "prompt 为空" });
 		if (reg!.running) return json(res, 409, { error: "上一轮还在跑" });
 		reg!.running = true;
 		emit(reg!, { type: "run_start" });
+		// 图片走 pi-agent 原生 image block（base64 裸串）
+		const images: ImageContent[] | undefined = Array.isArray(body.images)
+			? body.images
+					.filter((im: unknown) => {
+						const i = im as { data?: unknown; mimeType?: unknown };
+						return typeof i.data === "string" && typeof i.mimeType === "string";
+					})
+					.map((im: { data: string; mimeType: string }) => ({ type: "image" as const, data: im.data, mimeType: im.mimeType }))
+			: undefined;
 		// 异步跑：事件经常驻汇走环+SSE，接口立刻返回
 		reg!
-			.harness.run(prompt)
+			.harness.run(prompt, undefined, images)
 			.then((result) => {
 				emit(reg!, { type: "run_end", textLength: result.text.length, messageCount: result.messages.length });
 				void autoTitle(reg!);

@@ -6,10 +6,14 @@
  * 前置：宿主已在别处运行（npm start）；端口可用 NANMI_PORT 覆盖。
  */
 const { app, BrowserWindow } = require("electron");
+const { join } = require("node:path");
 
 const PORT = process.env.NANMI_PORT ?? 6110;
 
 app.whenReady().then(() => {
+	if (process.platform === "darwin" && app.dock) {
+		app.dock.setIcon(join(__dirname, "..", "web", "icons", "icon-512.png"));
+	}
 	const win = new BrowserWindow({
 		width: 1280,
 		height: 820,

@@ -217,7 +217,7 @@ body.empty #composer-zone { padding-bottom: 11vh; }
 body.empty #composer-card { box-shadow: var(--shadow); }
 body:not(.empty) #hero { display: none; }
 
-.msg { border-radius: 12px; }
+.msg { border-radius: 12px; position: relative; }
 .msg.user {
 	background: var(--panel-2);
 	align-self: flex-end; max-width: 82%;
@@ -260,6 +260,7 @@ body:not(.empty) #hero { display: none; }
 .run-indicator .run-ellipsis i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: run-bounce 1.2s ease-in-out infinite; }
 .run-indicator .run-ellipsis i:nth-child(2) { animation-delay: .15s; }
 .run-indicator .run-ellipsis i:nth-child(3) { animation-delay: .3s; }
+.run-indicator .run-elapsed { color: var(--dim); font-variant-numeric: tabular-nums; }
 @keyframes run-pulse { 0%, 100% { opacity: .35; transform: scale(.75); } 50% { opacity: 1; transform: scale(1.1); } }
 @keyframes run-bounce { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 
@@ -278,6 +279,7 @@ body:not(.empty) #hero { display: none; }
 #composer-zone { padding: 12px 24px 18px; display: flex; justify-content: center; }
 #composer-stack { width: min(720px, 100%); }
 #composer-card {
+	position: relative;
 	background: var(--panel);
 	border-radius: 22px;
 	padding: 14px 16px 10px;
@@ -316,7 +318,11 @@ body.empty #composer-card, #composer-card:focus-within { box-shadow: var(--shado
 .bare-select option { background: var(--panel); color: var(--text); }
 
 /* 富菜单（权限/模型/推理强度，向上弹出）*/
-.popover.menu2 { width: 300px; padding: 6px; }
+.popover.menu2 {
+	width: 300px; padding: 6px;
+	max-height: min(560px, calc(100vh - 120px));
+	overflow-y: auto; overscroll-behavior: contain;
+}
 .menu2-head {
 	display: flex; align-items: center; gap: 8px;
 	font-size: 13px; font-weight: 600; color: var(--text);
@@ -592,6 +598,90 @@ body:not(.empty) #composer-sub { border-radius: 16px; margin-top: 6px; }
 /* computer 工具的截图回显 */
 .tool-images { margin-top: 8px; display: grid; gap: 8px; }
 .tool-img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; display: block; }
+
+/* 用户消息里的图片附件 */
+.msg.user .msg-user-text { min-width: 0; }
+.msg.user .user-img { width: auto; max-width: 240px; max-height: 180px; margin-top: 8px; }
+.msg.user .user-img:first-child { margin-top: 2px; }
+
+/* 消息 hover 操作条（气泡下方浮出） */
+.msg-actions {
+	position: absolute; top: calc(100% + 2px);
+	display: flex; gap: 2px;
+	padding: 2px;
+	background: var(--panel);
+	border: 1px solid var(--border); border-radius: 10px;
+	box-shadow: var(--shadow);
+	opacity: 0; pointer-events: none; transition: opacity .12s;
+	z-index: 5;
+}
+.msg-actions.act-user { right: 0; }
+.msg-actions.act-assistant { left: 2px; }
+.msg:hover > .msg-actions, .msg-actions:hover { opacity: 1; pointer-events: auto; }
+.msg-act { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 7px; }
+.msg-act.fb-on { color: var(--accent); background: var(--panel-2); }
+
+/* 本轮产出/更改卡片 */
+.artifacts {
+	align-self: stretch; margin-top: 8px;
+	border: 1px solid var(--border); border-radius: 12px;
+	background: var(--panel); overflow: hidden;
+}
+.artifacts-head {
+	display: flex; align-items: center; gap: 8px;
+	padding: 10px 14px; cursor: pointer; user-select: none;
+	font-size: 13px;
+}
+.artifacts-head .caret { font-size: 10px; color: var(--dim); transition: transform .15s; }
+.artifacts.open .artifacts-head .caret { transform: rotate(90deg); }
+.artifacts-title { color: var(--text); }
+.diff-add { color: var(--ok); font-family: var(--mono); font-size: 12px; }
+.diff-del { color: var(--err); font-family: var(--mono); font-size: 12px; }
+.artifacts-body { display: none; border-top: 1px solid var(--border); }
+.artifacts.open .artifacts-body { display: block; }
+.artifacts-row {
+	display: flex; align-items: center; gap: 10px;
+	padding: 8px 14px; cursor: pointer; font-size: 13px;
+}
+.artifacts-row:hover { background: var(--panel-2); }
+.artifacts-row + .artifacts-row { border-top: 1px solid var(--border); }
+.artifacts-op {
+	flex: 0 0 auto; font-size: 11px; color: var(--dim);
+	border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px;
+}
+.artifacts-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+.artifacts-diff { flex: 0 0 auto; display: flex; gap: 6px; }
+
+/* composer 图片附件预览条 */
+#attach-strip {
+	display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px;
+	padding: 10px 12px 2px;
+}
+#attach-strip.warn .attach-thumb { border-color: var(--warn); opacity: 0.55; }
+#attach-strip.warn .attach-hint { color: var(--warn); }
+.attach-cell { position: relative; }
+.attach-thumb {
+	width: 56px; height: 56px; object-fit: cover;
+	border-radius: 8px; border: 1px solid var(--border); display: block; background: var(--panel-2);
+}
+.attach-loading { animation: blink 1s steps(2) infinite; }
+.attach-x {
+	position: absolute; top: -6px; right: -6px;
+	width: 18px; height: 18px; border-radius: 50%;
+	border: 1px solid var(--border); background: var(--panel); color: var(--dim);
+	font-size: 10px; line-height: 1; cursor: pointer;
+	display: flex; align-items: center; justify-content: center;
+}
+.attach-x:hover { color: var(--text); border-color: var(--dim); }
+.attach-hint { font-size: 12px; color: var(--dim); align-self: center; }
+#composer-card.dragging { border-color: var(--accent); }
+#composer-card.dragging::after {
+	content: "松开以附加图片";
+	position: absolute; inset: 0;
+	display: flex; align-items: center; justify-content: center;
+	background: color-mix(in srgb, var(--panel) 82%, transparent);
+	border-radius: inherit; color: var(--accent); font-size: 13px; pointer-events: none;
+}
 
 /* ── 模型 tab：DSH 式服务商管理面板 ─────────────────────────────────── */
 .pm-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }

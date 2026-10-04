@@ -6,8 +6,9 @@
 	<title>nanmi/harness</title>
 	<link rel="manifest" href="/manifest.webmanifest" />
 	<meta name="theme-color" content="#1b1a19" />
-	<link rel="icon" href="/icon.svg" type="image/svg+xml" />
-	<link rel="apple-touch-icon" href="/icon.svg" />
+	<link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32" />
+	<link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+	<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 	<meta name="apple-mobile-web-app-capable" content="yes" />
 	<meta name="mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -64,8 +65,13 @@
 				<div id="composer-stack">
 					<div id="metrics-bar" class="metrics hidden"></div>
 					<div id="composer-card">
+						<div id="attach-strip" class="hidden"></div>
 						<textarea id="input" rows="1" placeholder="给 harness 一个任务…" disabled></textarea>
-					<div class="composer-row">
+						<input type="file" id="attach-file" accept="image/png,image/jpeg,image/webp,image/gif" multiple class="hidden" />
+						<div class="composer-row">
+							<button id="btn-attach" class="chip-btn hidden" title="附带图片（也可直接粘贴或拖入）">
+								<span class="chip-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg></span>
+							</button>
 							<button id="perm-chip" class="chip-btn" title="权限模式">
 								<span class="chip-ic" id="perm-ic"></span>
 								<span id="perm-label">请求批准</span>
