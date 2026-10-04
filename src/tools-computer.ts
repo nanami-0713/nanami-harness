@@ -68,7 +68,7 @@ interface CapturedShot {
 
 /** 截主屏 → 降采样 → base64。scale 由（降采样后宽 × 已知点宽）倒推。 */
 async function capture(maxDimension: number): Promise<CapturedShot> {
-	const dir = mkdtempSync(join(tmpdir(), "nanmi-computer-"));
+	const dir = mkdtempSync(join(tmpdir(), "nanami-computer-"));
 	const raw = join(dir, "raw.png");
 	const out = join(dir, "out.png");
 	try {

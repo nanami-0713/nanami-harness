@@ -19,6 +19,6 @@ node examples/01-minimal.mjs
 
 所有联网示例走 `zai-coding-cn/glm-5.3-flash`，key 解析顺序：环境变量 `ZAI_CODING_CN_API_KEY` → `~/.dsh/.credentials.yaml`。
 
-两点预期行为：①启动日志的 `[nanmi:extensions]` 是 `~/.nanmi/plugins/` 用户插件被默认装配，非报错；②03/04 会在 `./.nanmi/sessions/` 留下会话文件。各脚本头部样板（key 解析等）故意重复，保证单个文件可独立拷走运行。
+两点预期行为：①启动日志的 `[nanami:extensions]` 是 `~/.nanami/plugins/` 用户插件被默认装配，非报错；②03/04 会在 `./.nanami/sessions/` 留下会话文件。各脚本头部样板（key 解析等）故意重复，保证单个文件可独立拷走运行。
 
 Web GUI 不是 example 而是应用入口：`npm run web`（见主 README「Web GUI」一节）。

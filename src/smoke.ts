@@ -30,7 +30,7 @@ if (!API_KEY) {
 
 const PROVIDER = "zai-coding-cn";
 const MODEL_ID = "glm-5.3-flash";
-const SYSTEM_PROMPT = `你是 nanmi-harness 集成测试体。用中文，简短。需要事实时用工具查，不要猜。`;
+const SYSTEM_PROMPT = `你是 nanami-harness 集成测试体。用中文，简短。需要事实时用工具查，不要猜。`;
 
 // ── 步骤 0：权限矩阵 ────────────────────────────────────────────────────────
 {
@@ -160,7 +160,7 @@ const SYSTEM_PROMPT = `你是 nanmi-harness 集成测试体。用中文，简短
 	const sessionId = harness.sessionId!;
 	console.log(`\n会话已落盘：${sessionId}`);
 	record("会话 id 生成", !!sessionId, sessionId);
-	record("会话可读取", SessionStore.load(".nanmi/sessions", sessionId) !== undefined, "JSONL 落盘验证");
+	record("会话可读取", SessionStore.load(".nanami/sessions", sessionId) !== undefined, "JSONL 落盘验证");
 	await harness.dispose();
 
 	// ── 步骤 4：resume run B ────────────────────────────────────────────────

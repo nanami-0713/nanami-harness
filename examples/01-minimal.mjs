@@ -17,10 +17,10 @@ if (!apiKey) {
 const harness = await NanmiHarness.create({
 	provider: "zai-coding-cn",
 	modelId: "glm-5.3-flash",
-	systemPrompt: "你是 nanmi-harness 的演示体。用中文，一句话回答。",
+	systemPrompt: "你是 nanami-harness 的演示体。用中文，一句话回答。",
 	apiKey,
 	// 纯对话演示：能关的配置面都关掉。todo/技能等常驻工具与
-	// ~/.nanmi/plugins 用户插件仍按默认装配（启动日志的 [nanmi:extensions] 即它）
+	// ~/.nanami/plugins 用户插件仍按默认装配（启动日志的 [nanami:extensions] 即它）
 	tools: false,
 	subagent: false,
 	jev: false,
@@ -29,7 +29,7 @@ const harness = await NanmiHarness.create({
 });
 
 // onEvent 是过程观察口：这里挑文本增量做打字机效果
-const result = await harness.run("用一句话介绍 nanmi-harness 是什么。", (event) => {
+const result = await harness.run("用一句话介绍 nanami-harness 是什么。", (event) => {
 	if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 		process.stdout.write(event.assistantMessageEvent.delta);
 	}

@@ -32,7 +32,7 @@ export class McpBridge {
 					tools.push(this.wrapTool(serverName, client, raw as McpToolInfo));
 				}
 			} catch (err) {
-				console.error(`[nanmi:mcp] server "${serverName}" 连接失败，已跳过:`, (err as Error).message);
+				console.error(`[nanami:mcp] server "${serverName}" 连接失败，已跳过:`, (err as Error).message);
 			}
 		}
 		// 确定性排序（参照 DSH 的 canonical order）：server 枚举顺序不受我们控制，
@@ -47,14 +47,14 @@ export class McpBridge {
 			try {
 				await client.close();
 			} catch (err) {
-				console.error(`[nanmi:mcp] server "${name}" 关闭失败:`, (err as Error).message);
+				console.error(`[nanami:mcp] server "${name}" 关闭失败:`, (err as Error).message);
 			}
 		}
 		this.clients.clear();
 	}
 
 	private async connectOne(serverName: string, config: McpServerConfig): Promise<Client> {
-		const client = new Client({ name: "nanmi-harness", version: "0.1.0" });
+		const client = new Client({ name: "nanami-harness", version: "0.1.0" });
 		const transport =
 			"url" in config
 				? new StreamableHTTPClientTransport(new URL(config.url))

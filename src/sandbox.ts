@@ -34,7 +34,7 @@ export class Sandbox {
 		this.policy = policy;
 		this.cwd = cwd;
 		this.kind = Sandbox.detect();
-		this.profileFile = join(cwd, ".nanmi", "sandbox.sb");
+		this.profileFile = join(cwd, ".nanami", "sandbox.sb");
 		if (this.kind) this.writeProfile();
 	}
 
@@ -55,7 +55,7 @@ export class Sandbox {
 		if (!this.kind) {
 			if (!this.warned) {
 				this.warned = true;
-				console.error("[nanmi:sandbox] 本机没有 sandbox-exec/bwrap，沙箱策略降级为透传（仅剩审批层）");
+				console.error("[nanami:sandbox] 本机没有 sandbox-exec/bwrap，沙箱策略降级为透传（仅剩审批层）");
 			}
 			return argv;
 		}
@@ -74,7 +74,7 @@ export class Sandbox {
 	}
 
 	private writeProfile(): void {
-		const dir = join(this.cwd, ".nanmi");
+		const dir = join(this.cwd, ".nanami");
 		mkdirSync(dir, { recursive: true });
 		const denyNet = this.policy.network === "deny" ? "\n(deny network*)" : "";
 		const fsRules =
@@ -89,7 +89,7 @@ export class Sandbox {
 	(literal "/dev/null")
 	(literal "/dev/urandom"))`
 				: "";
-		// nanmi-harness 沙箱策略：防意外事故，不防有意逃逸；人事仍由审批层把关
+		// nanami-harness 沙箱策略：防意外事故，不防有意逃逸；人事仍由审批层把关
 		const profile = `(version 1)
 (allow default)${denyNet}${fsRules}
 `;

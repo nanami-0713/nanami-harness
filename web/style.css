@@ -1,4 +1,4 @@
-/* nanmi/harness —— Codex 像素级画风：暖深灰、扁平侧栏、双层 composer 卡 */
+/* nanami/harness —— Codex 像素级画风：暖深灰、扁平侧栏、双层 composer 卡 */
 :root {
 	--bg: #1b1a19; /* 主会话区：更深更暗的暖黑（平色） */
 	--app-backdrop: linear-gradient(172deg, #3d372f 0%, #26221f 30%, #191817 62%, #141312 100%); /* 侧栏背后的暖色渐变 */

@@ -23,7 +23,7 @@ export class HookRunner {
 				return { block: true, reason: stderr.trim() || `被 preToolCall 钩子阻断（exit 2）` };
 			}
 			// 观察者钩子的日志出口：非阻断时 stderr 透传到 harness 的 stderr
-			if (stderr.trim()) process.stderr.write(`[nanmi:hook] ${stderr.trim()}\n`);
+			if (stderr.trim()) process.stderr.write(`[nanami:hook] ${stderr.trim()}\n`);
 			const parsed = parseJson(stdout) as { block?: boolean; reason?: string } | null;
 			if (parsed?.block) {
 				return { block: true, reason: parsed.reason ?? "被 preToolCall 钩子阻断" };
@@ -35,14 +35,14 @@ export class HookRunner {
 	async runPostTool(payload: { toolName: string; args: unknown; isError: boolean }): Promise<void> {
 		for (const cmd of this.config?.postToolCall ?? []) {
 			const { stderr } = await runCommand(cmd, payload);
-			if (stderr.trim()) process.stderr.write(`[nanmi:hook] ${stderr.trim()}\n`);
+			if (stderr.trim()) process.stderr.write(`[nanami:hook] ${stderr.trim()}\n`);
 		}
 	}
 
 	async runEnd(payload: { sessionId?: string; textLength: number; messageCount: number }): Promise<void> {
 		for (const cmd of this.config?.runEnd ?? []) {
 			const { stderr } = await runCommand(cmd, payload);
-			if (stderr.trim()) process.stderr.write(`[nanmi:hook] ${stderr.trim()}\n`);
+			if (stderr.trim()) process.stderr.write(`[nanami:hook] ${stderr.trim()}\n`);
 		}
 	}
 }

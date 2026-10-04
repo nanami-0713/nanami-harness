@@ -3,7 +3,7 @@
  *
  * 分层原则：
  *  - AGENTS.md 是"项目宪法"：会话创建时一次性注入 system prompt（前缀稳定 = 缓存友好），
- *    全局（~/.nanmi/AGENTS.md）在前、项目（cwd/AGENTS.md）在后；
+ *    全局（~/.nanami/AGENTS.md）在前、项目（cwd/AGENTS.md）在后；
  *  - Skills 走渐进披露：system prompt 只放"名称 + 一句话描述"的目录（每个技能几十 token），
  *    全文由模型按需调用 skill 工具加载——不用到的技能永远不占上下文。
  */
@@ -28,7 +28,7 @@ export interface LoadedContext {
 	skills: SkillMeta[];
 }
 
-const GLOBAL_AGENTS = `${process.env.HOME}/.nanmi/AGENTS.md`;
+const GLOBAL_AGENTS = `${process.env.HOME}/.nanami/AGENTS.md`;
 
 /** AGENTS.md：全局在前、项目在后（后者更具体的指令可以覆盖前者） */
 export function loadAgentsFiles(cwd: string, extraFiles?: string[]): AgentsFile[] {
@@ -46,10 +46,10 @@ export function loadAgentsFiles(cwd: string, extraFiles?: string[]): AgentsFile[
 
 /**
  * 技能发现：扫描目录下 `<name>/SKILL.md`，解析 frontmatter 的 name/description。
- * 目录默认 = cwd/skills、cwd/.nanmi/skills、~/.nanmi/skills
+ * 目录默认 = cwd/skills、cwd/.nanami/skills、~/.nanami/skills
  */
 export function discoverSkills(cwd: string, extraDirs?: string[]): SkillMeta[] {
-	const roots = [...(extraDirs ?? []), join(cwd, "skills"), join(cwd, ".nanmi/skills"), `${process.env.HOME}/.nanmi/skills`];
+	const roots = [...(extraDirs ?? []), join(cwd, "skills"), join(cwd, ".nanami/skills"), `${process.env.HOME}/.nanami/skills`];
 	const skills: SkillMeta[] = [];
 	const seen = new Set<string>();
 	for (const root of roots) {

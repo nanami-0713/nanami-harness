@@ -1,7 +1,7 @@
 {
 	"id": "/",
-	"name": "nanmi/harness",
-	"short_name": "nanmi",
+	"name": "nanami/harness",
+	"short_name": "nanami",
 	"description": "基于 pi-agent 内核的个人编码 agent",
 	"lang": "zh-CN",
 	"start_url": "/",

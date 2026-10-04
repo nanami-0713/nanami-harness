@@ -1,5 +1,5 @@
 /**
- * @nanmi/harness —— 个人 harness（M1-M3 完整版）
+ * @nanami/harness —— 个人 harness（M1-M3 完整版）
  *
  * 分层：L0 pi-ai（模型路由）→ L1 pi-agent-core（loop）→ 本包（L2 你的 harness）。
  * 不 fork 上游：定制全部放在本层，上游升级只受公共 API 面约束（版本钉 exact）。
@@ -43,7 +43,7 @@ export { PermissionGate } from "./permissions.js";
 export { Compactor, contextWindowOf } from "./compaction.js";
 export { resolveApiKey } from "./key.js";
 
-const DEFAULT_SESSION_DIR = ".nanmi/sessions";
+const DEFAULT_SESSION_DIR = ".nanami/sessions";
 /** 空闲保险丝：模型完全无输出且无在途动作持续这么久才判死（有活动就重置，无总时长上限） */
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
 
@@ -113,7 +113,7 @@ export class NanmiHarness {
 
 	static async create(config: NanmiConfig): Promise<NanmiHarness> {
 		const cwd = config.cwd ?? process.cwd();
-		// ── 模型面（M-A）：内置 40 家 + ~/.nanmi/config.json 自定义端点，凭据先装 env ──
+		// ── 模型面（M-A）：内置 40 家 + ~/.nanami/config.json 自定义端点，凭据先装 env ──
 		const userConfig: UserConfig = { ...loadUserConfig(), ...(config.userConfig ?? {}) };
 		if (config.customProviders?.length) {
 			userConfig.customProviders = [...(userConfig.customProviders ?? []), ...config.customProviders];
@@ -132,14 +132,14 @@ export class NanmiHarness {
 			? (): string | undefined => (modelHolder.current.provider === apiKeyFor ? apiKey : undefined)
 			: undefined;
 
-		// ── 扩展面（M-B/M-C）：mcp.json 双层 + ~/.nanmi/plugins/ ────────────────
+		// ── 扩展面（M-B/M-C）：mcp.json 双层 + ~/.nanami/plugins/ ────────────────
 		const ext = await loadExtensions(cwd);
-		for (const warning of ext.warnings) console.error(`[nanmi:extensions] ${warning}`);
+		for (const warning of ext.warnings) console.error(`[nanami:extensions] ${warning}`);
 		if (ext.plugins.length) {
 			const summary = ext.plugins
 				.map((p) => `${p.name}${p.version ? "@" + p.version : ""}(${p.contributes.join(",") || "空"})`)
 				.join("; ");
-			console.error(`[nanmi:extensions] 已加载插件: ${summary}`);
+			console.error(`[nanami:extensions] 已加载插件: ${summary}`);
 		}
 
 		// ── 上下文组装：AGENTS.md + Skills 渐进披露（M·上下文）────────────────
@@ -266,7 +266,7 @@ export class NanmiHarness {
 				const compacted = await compactor.compact(ctx.context.messages);
 				agent.state.messages = compacted;
 				console.error(
-					`[nanmi:compaction] ${ctx.context.messages.length} 条消息压缩为 ${compacted.length} 条`,
+					`[nanami:compaction] ${ctx.context.messages.length} 条消息压缩为 ${compacted.length} 条`,
 				);
 				return { context: { ...ctx.context, messages: compacted } };
 			},

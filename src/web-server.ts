@@ -9,7 +9,7 @@
  *    POST /api/approve 兑现，run 就地继续。这就是 GUI 版的 y/n/a。
  *
  * 启动：npm run web（构建后 node dist/web-server.js），默认 127.0.0.1:6110。
- * 可选配置文件 ./nanmi.web.json：{provider, modelId, systemPrompt, mcp, permissionMode}
+ * 可选配置文件 ./nanami.web.json：{provider, modelId, systemPrompt, mcp, permissionMode}
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ import type { NanmiConfig, PermissionMode } from "./types.js";
 import { resolveApiKey } from "./key.js";
 import { BUILTIN_TOOL_NAMES } from "./tools.js";
 
-const PORT = Number(process.env.NANMI_PORT ?? 6110);
+const PORT = Number(process.env.NANAMI_PORT ?? process.env.NANMI_PORT ?? 6110); // 旧名 NANMI_* 兼容可读
 const HOST = "127.0.0.1";
 const RING_CAP = 4_000;
 const RESULT_PREVIEW_CAP = 8_000;
@@ -37,18 +37,22 @@ const RESULT_PREVIEW_CAP = 8_000;
 interface WebConfig extends Partial<NanmiConfig> {
 	permissionMode?: PermissionMode;
 }
-const webConfig: WebConfig = existsSync("nanmi.web.json")
-	? (JSON.parse(readFileSync("nanmi.web.json", "utf8")) as WebConfig)
+// 配置文件：新名优先，旧名 nanmi.web.json 兼容可读（写入恒用新名）
+const WEB_CONFIG_FILE = existsSync("nanami.web.json")
+	? "nanami.web.json"
+	: existsSync("nanmi.web.json") ? "nanmi.web.json" : "nanami.web.json";
+const webConfig: WebConfig = existsSync(WEB_CONFIG_FILE)
+	? (JSON.parse(readFileSync(WEB_CONFIG_FILE, "utf8")) as WebConfig)
 	: {};
 
-// ── 模型面（M-A）：内置 40 家 + ~/.nanmi/config.json 自定义端点，凭据先装 env ──
+// ── 模型面（M-A）：内置 40 家 + ~/.nanami/config.json 自定义端点，凭据先装 env ──
 const userConfig = loadUserConfig();
 const MODELS = buildModels(userConfig);
-const PROVIDER = userConfig.defaultProvider ?? webConfig.provider ?? process.env.NANMI_PROVIDER ?? "zai-coding-cn";
-const MODEL_ID = userConfig.defaultModel ?? webConfig.modelId ?? process.env.NANMI_MODEL ?? "glm-5.3-flash";
-const SESSION_DIR = join(process.cwd(), ".nanmi/sessions"); // 会话目录全局固定，与目标工作文件夹解耦
+const PROVIDER = userConfig.defaultProvider ?? webConfig.provider ?? process.env.NANAMI_PROVIDER ?? process.env.NANMI_PROVIDER ?? "zai-coding-cn";
+const MODEL_ID = userConfig.defaultModel ?? webConfig.modelId ?? process.env.NANAMI_MODEL ?? process.env.NANMI_MODEL ?? "glm-5.3-flash";
+const SESSION_DIR = join(process.cwd(), ".nanami/sessions"); // 会话目录全局固定，与目标工作文件夹解耦
 
-/** 运行时可改的默认设置（设置弹窗写入，持久化到 nanmi.web.json，对新会话生效） */
+/** 运行时可改的默认设置（设置弹窗写入，持久化到 nanami.web.json，对新会话生效） */
 const runtimeSettings = {
 	defaultPermissionMode: (webConfig.permissionMode ?? "default") as PermissionMode,
 	defaultProvider: PROVIDER,
@@ -57,7 +61,7 @@ const runtimeSettings = {
 };
 
 function persistSettings(): void {
-	const file = join(process.cwd(), "nanmi.web.json");
+	const file = join(process.cwd(), "nanami.web.json");
 	const conf = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>) : {};
 	conf.permissionMode = runtimeSettings.defaultPermissionMode;
 	conf.provider = runtimeSettings.defaultProvider;
@@ -68,7 +72,7 @@ function persistSettings(): void {
 }
 const SYSTEM_PROMPT =
 	webConfig.systemPrompt ??
-	`你是 nanmi-harness，一个运行在本机上的编码 agent。用中文，结论先行。需要事实时用工具查，不要猜。对破坏性操作先确认。`;
+	`你是 nanami-harness，一个运行在本机上的编码 agent。用中文，结论先行。需要事实时用工具查，不要猜。对破坏性操作先确认。`;
 const PERMISSION_MODE: PermissionMode = webConfig.permissionMode ?? "default";
 
 // zai key 仍走 DSH 凭据库兼容链（写 env 即可，provider 认证层自取）；多供应商下缺它不致命
@@ -152,6 +156,14 @@ function makeWebAsker(reg: SessionReg) {
 	};
 }
 
+/** 会话目录兼容：新名不存在而旧名 .nanmi 存在（未迁移的隔离项目）时读旧写旧，防孤儿化 */
+function resolveSessionDir(cwd: string, isolated: boolean): string {
+	const fresh = join(cwd, ".nanami/sessions");
+	if (!isolated) return fresh;
+	if (existsSync(fresh) || !existsSync(join(cwd, ".nanmi/sessions"))) return fresh;
+	return join(cwd, ".nanmi/sessions");
+}
+
 async function createSession(opts: {
 	resumeId?: string;
 	cwd?: string;
@@ -162,8 +174,8 @@ async function createSession(opts: {
 }): Promise<SessionReg> {
 	const cwd = opts.cwd ?? process.cwd();
 	if (!existsSync(cwd)) throw new Error(`工作文件夹不存在: ${cwd}`);
-	// 隔离记忆的真实语义：该项目会话数据物理存在 <项目>/.nanmi/sessions，不进全局库
-	const sessionDir = opts.isolateMemory ? join(cwd, ".nanmi/sessions") : SESSION_DIR;
+	// 隔离记忆的真实语义：该项目会话数据物理存在 <项目>/.nanami/sessions，不进全局库
+	const sessionDir = opts.isolateMemory ? resolveSessionDir(cwd, true) : SESSION_DIR;
 	// 恢复会话沿用其 provider/模型；显式参数 > 会话元数据 > 全局默认
 	const resumedMeta = opts.resumeId ? SessionStore.load(sessionDir, opts.resumeId)?.meta : undefined;
 	const provider = opts.provider ?? resumedMeta?.provider ?? runtimeSettings.defaultProvider;
@@ -758,7 +770,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 		if (target?.harness.sessionStore) {
 			target.harness.sessionStore.setTitle(title, "user");
 		} else {
-			SessionStore.patchMeta(join(process.cwd(), ".nanmi/sessions"), String(body.sessionId), {
+			SessionStore.patchMeta(join(process.cwd(), ".nanami/sessions"), String(body.sessionId), {
 				title,
 				titleSource: "user",
 			});
@@ -775,7 +787,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 		if (target?.harness.sessionStore) {
 			target.harness.sessionStore.setArchived(archived);
 		} else {
-			SessionStore.patchMeta(join(process.cwd(), ".nanmi/sessions"), id, { archived });
+			SessionStore.patchMeta(join(process.cwd(), ".nanami/sessions"), id, { archived });
 		}
 		return json(res, 200, { ok: true, archived });
 	}
@@ -855,6 +867,6 @@ async function autoTitle(reg: SessionReg): Promise<void> {
 
 // ── 启动 ────────────────────────────────────────────────────────────────────
 server.listen(PORT, HOST, () => {
-	console.log(`nanmi-harness web GUI: http://${HOST}:${PORT}`);
-	console.log(`模型 ${PROVIDER}/${MODEL_ID} · 权限默认 ${PERMISSION_MODE} · 配置文件 nanmi.web.json 可覆盖`);
+	console.log(`nanami-harness web GUI: http://${HOST}:${PORT}`);
+	console.log(`模型 ${PROVIDER}/${MODEL_ID} · 权限默认 ${PERMISSION_MODE} · 配置文件 nanami.web.json 可覆盖`);
 });

@@ -3,12 +3,12 @@
  * 与 ZCode 同构：Electron 是浏览器皮，Node 宿主进程才是 harness 本体。
  *
  * 使用：npm i -D electron && npx electron desktop/main.js
- * 前置：宿主已在别处运行（npm start）；端口可用 NANMI_PORT 覆盖。
+ * 前置：宿主已在别处运行（npm start）；端口可用 NANAMI_PORT 覆盖。
  */
 const { app, BrowserWindow } = require("electron");
 const { join } = require("node:path");
 
-const PORT = process.env.NANMI_PORT ?? 6110;
+const PORT = process.env.NANAMI_PORT ?? 6110;
 
 app.whenReady().then(() => {
 	if (process.platform === "darwin" && app.dock) {
@@ -17,7 +17,7 @@ app.whenReady().then(() => {
 	const win = new BrowserWindow({
 		width: 1280,
 		height: 820,
-		title: "nanmi/harness",
+		title: "nanami/harness",
 		backgroundColor: "#0f1117",
 		autoHideMenuBar: true,
 	});

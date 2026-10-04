@@ -4,8 +4,8 @@
  * Models 实例的三个合成来源：
  * 1. builtinModels() 的 40 家内置 provider（anthropic/openai/deepseek/google/zai…），
  *    key 走各家约定 env（ANTHROPIC_API_KEY、OPENAI_API_KEY…），从 shell env 或
- *    ~/.nanmi/credentials.yaml 来；
- * 2. ~/.nanmi/config.json 的 customProviders：OpenAI 兼容端点（baseUrl + 模型表），
+ *    ~/.nanami/credentials.yaml 来；
+ * 2. ~/.nanami/config.json 的 customProviders：OpenAI 兼容端点（baseUrl + 模型表），
  *    走 createProvider + openai-completions api，注册进同一 Models 实例；
  * 3. 编程用法经 NanmiConfig.providers 直传。
  *
@@ -20,9 +20,9 @@ import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
 import type { Models, Model, Api, MutableModels } from "@earendil-works/pi-ai";
 
-export const NANMI_DIR = join(homedir(), ".nanmi");
-export const USER_CONFIG_FILE = join(NANMI_DIR, "config.json");
-export const CREDENTIALS_FILE = join(NANMI_DIR, "credentials.yaml");
+export const NANAMI_DIR = join(homedir(), ".nanami");
+export const USER_CONFIG_FILE = join(NANAMI_DIR, "config.json");
+export const CREDENTIALS_FILE = join(NANAMI_DIR, "credentials.yaml");
 
 /** OpenAI 兼容自定义端点（config.json: customProviders[]） */
 export interface CustomProviderConfig {
@@ -46,11 +46,11 @@ export interface UserConfig {
 	defaultProvider?: string;
 	defaultModel?: string;
 	customProviders?: CustomProviderConfig[];
-	/** 额外凭据文件（默认 ~/.nanmi/credentials.yaml；DSH 用户可指 ~/.dsh/.credentials.yaml） */
+	/** 额外凭据文件（默认 ~/.nanami/credentials.yaml；DSH 用户可指 ~/.dsh/.credentials.yaml） */
 	credentialsFile?: string;
 }
 
-/** 读 ~/.nanmi/config.json；不存在给空配置（一切走缺省） */
+/** 读 ~/.nanami/config.json；不存在给空配置（一切走缺省） */
 export function loadUserConfig(): UserConfig {
 	try {
 		return JSON.parse(readFileSync(USER_CONFIG_FILE, "utf8")) as UserConfig;
@@ -126,7 +126,7 @@ export function buildModels(userConfig: UserConfig = {}): MutableModels {
 		try {
 			registerCustomProvider(models, cp);
 		} catch (err) {
-			console.error(`[nanmi:providers] 自定义 provider "${cp.id}" 注册失败: ${(err as Error).message}`);
+			console.error(`[nanami:providers] 自定义 provider "${cp.id}" 注册失败: ${(err as Error).message}`);
 		}
 	}
 	return models;

@@ -6,7 +6,7 @@
  * 前置：ZAI_CODING_CN_API_KEY
  * 成本：约 2 次模型调用
  *
- * 落盘位置：./.nanmi/sessions/<id>.jsonl（append-only，压缩写检查点，物理史保留）
+ * 落盘位置：./.nanami/sessions/<id>.jsonl（append-only，压缩写检查点，物理史保留）
  */
 import { NanmiHarness, resolveApiKey } from "../dist/index.js";
 

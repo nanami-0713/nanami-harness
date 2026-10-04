@@ -1,6 +1,6 @@
 /**
  * todo_write（M1a 自建工具）：pi 没有任务清单工具，这是 harness 的第一批原生工具之一。
- * 语义对齐 ZCode：整表替换、单进行项（同一时刻最多一条 in_progress）、落盘 .nanmi/todos.json。
+ * 语义对齐 ZCode：整表替换、单进行项（同一时刻最多一条 in_progress）、落盘 .nanami/todos.json。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,9 +32,9 @@ export interface TodoItem {
 }
 
 export function createTodoTool(cwd: string): AgentTool<typeof todoSchema, { count: number }> {
-	const file = join(cwd, ".nanmi", "todos.json");
+	const file = join(cwd, ".nanami", "todos.json");
 	const save = (todos: TodoItem[]) => {
-		mkdirSync(join(cwd, ".nanmi"), { recursive: true });
+		mkdirSync(join(cwd, ".nanami"), { recursive: true });
 		writeFileSync(file, `${JSON.stringify(todos, null, 2)}\n`);
 	};
 	return {
@@ -72,5 +72,5 @@ export function loadTodos(cwd: string): TodoItem[] {
 }
 
 function file(cwd: string): string {
-	return join(cwd, ".nanmi", "todos.json");
+	return join(cwd, ".nanami", "todos.json");
 }

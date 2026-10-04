@@ -1,5 +1,5 @@
 /**
- * nanmi/harness Web GUI 前端 v3（Codex 像素级画风）。
+ * nanami/harness Web GUI 前端 v3（Codex 像素级画风）。
  *
  * v3 新增：模型下拉（/api/models，写 state.model 下一条消息生效）、
  * 工作文件夹选择（/api/folders + 新会话绑定 cwd）、左下角设置弹层、
@@ -23,7 +23,7 @@ const state = {
 	es: null,
 	renderTimer: null,
 	menuFor: null,
-	themeMode: localStorage.getItem("nanmi-theme-mode") ?? "system",
+	themeMode: localStorage.getItem("nanami-theme-mode") ?? "system",
 	stick: true, // 贴底跟随：用户滚离底部时置 false，流式更新不再拽动视口
 	pendingImages: [], // 待发送图片：{data(base64), mimeType, name?, loading?}
 	runStartTs: 0, // 本轮 run 起始时刻（客户端口径，驱动"已运行 xx 秒"）
@@ -66,7 +66,7 @@ function applyTheme() {
 }
 function setThemeMode(mode) {
 	state.themeMode = mode;
-	localStorage.setItem("nanmi-theme-mode", mode);
+	localStorage.setItem("nanami-theme-mode", mode);
 	applyTheme();
 }
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
@@ -315,7 +315,7 @@ function actionBtn(icon, title, onclick) {
 }
 
 function feedbackKey(m) {
-	return `nanmi-fb:${state.sessionId}:${m.timestamp}`;
+	return `nanami-fb:${state.sessionId}:${m.timestamp}`;
 }
 
 function paintFeedback(bar, m) {
@@ -815,7 +815,7 @@ const FOLDER_OPEN = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 
 const GROUP_SHOW_MAX = 5;
 const state_sidebar = {
-	folderCollapsed: new Set(JSON.parse(localStorage.getItem("nanmi-folders-collapsed") ?? "[]")),
+	folderCollapsed: new Set(JSON.parse(localStorage.getItem("nanami-folders-collapsed") ?? "[]")),
 	folderMore: new Set(), // 点了"显示更多"的组（内存态即可）
 };
 
@@ -884,7 +884,7 @@ function groupHeader(key, items, isOpen) {
 	head.onclick = () => {
 		if (state_sidebar.folderCollapsed.has(key)) state_sidebar.folderCollapsed.delete(key);
 		else state_sidebar.folderCollapsed.add(key);
-		localStorage.setItem("nanmi-folders-collapsed", JSON.stringify([...state_sidebar.folderCollapsed]));
+		localStorage.setItem("nanami-folders-collapsed", JSON.stringify([...state_sidebar.folderCollapsed]));
 		refreshSessions();
 	};
 	return head;
@@ -1647,7 +1647,7 @@ async function openModelMenu() {
 				if (selected) row.append(el("span", "m2-check", "✓"));
 				row.title = p.available
 					? `${p.provider}/${m.id} · ctx ${Math.round((m.contextWindow ?? 0) / 1000)}k`
-					: `该 provider 未配置 key（~/.nanmi/credentials.yaml 或环境变量），仍可切换`;
+					: `该 provider 未配置 key（~/.nanami/credentials.yaml 或环境变量），仍可切换`;
 				row.onclick = async () => {
 					closeRichMenu();
 					try {
@@ -1738,7 +1738,7 @@ function adopt(data) {
 	// 切换目标所在组自动展开（新会话可见）
 	const adoptKey = data.project || basename(data.cwd) || "未分组";
 	state_sidebar.folderCollapsed.delete(adoptKey);
-	localStorage.setItem("nanmi-folders-collapsed", JSON.stringify([...state_sidebar.folderCollapsed]));
+	localStorage.setItem("nanami-folders-collapsed", JSON.stringify([...state_sidebar.folderCollapsed]));
 	renderAll();
 	updateProjectUI();
 	openSSE();
@@ -2009,7 +2009,7 @@ async function boot() {
 				}],
 			}, null, 2);
 			help.append(el("div", "pmf-note",
-				`OpenAI 兼容端点写入 ${provData ? provData.files.config.replace(/^\/Users\/[^/]+/, "~") : "~/.nanmi/config.json"} 的 customProviders，key 写入凭据文件的 envVar；保存后重启服务。`));
+				`OpenAI 兼容端点写入 ${provData ? provData.files.config.replace(/^\/Users\/[^/]+/, "~") : "~/.nanami/config.json"} 的 customProviders，key 写入凭据文件的 envVar；保存后重启服务。`));
 			const pre = el("pre", "pmf-template mono", template);
 			help.append(pre);
 			const copy = el("button", "pmf-btn", "复制模板");

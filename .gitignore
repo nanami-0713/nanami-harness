@@ -3,3 +3,4 @@ dist/
 .nanmi/
 *.log
 .DS_Store
+.nanami/

@@ -4,11 +4,11 @@
  * 三个加载来源，全部在 NanmiHarness.create 时合并进装配：
  *
  * 1. MCP 配置文件（ZCode 风格的 user + project 双层）：
- *    ~/.nanmi/mcp.json                          —— 用户层
- *    <cwd>/.nanmi/mcp.json                      —— 项目层，同名覆盖，"disabled": true 可关
+ *    ~/.nanami/mcp.json                          —— 用户层
+ *    <cwd>/.nanami/mcp.json                      —— 项目层，同名覆盖，"disabled": true 可关
  *    格式：{ "servers": { "<name>": { "command"|"url", ... } } }
  *
- * 2. 插件目录：~/.nanmi/plugins/<id>/plugin.json，每个插件可贡献五种东西：
+ * 2. 插件目录：~/.nanami/plugins/<id>/plugin.json，每个插件可贡献五种东西：
  *    mcp.servers        —— MCP server（名字带 <id>- 前缀防碰撞）
  *    hooks              —— preToolCall/postToolCall/runEnd 原生命令
  *    skills             —— 技能目录（相对插件根），进渐进披露目录
@@ -24,7 +24,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { HookConfig, McpServerConfig } from "./types.js";
-import { NANMI_DIR } from "./providers.js";
+import { NANAMI_DIR } from "./providers.js";
 
 /** 单层 MCP 配置文件 */
 interface McpFile {
@@ -85,8 +85,8 @@ function readMcpFile(file: string, warnings: string[]): Record<string, McpServer
 export function loadMcpServers(cwd: string): { servers: Record<string, McpServerConfig>; warnings: string[] } {
 	const warnings: string[] = [];
 	const servers = {
-		...readMcpFile(join(NANMI_DIR, "mcp.json"), warnings),
-		...readMcpFile(join(cwd, ".nanmi", "mcp.json"), warnings),
+		...readMcpFile(join(NANAMI_DIR, "mcp.json"), warnings),
+		...readMcpFile(join(cwd, ".nanami", "mcp.json"), warnings),
 	};
 	return { servers, warnings };
 }
@@ -170,7 +170,7 @@ async function loadPlugin(
 }
 
 /**
- * 插件加载（M-C）：扫 ~/.nanmi/plugins/ 下所有含 plugin.json 的子目录。
+ * 插件加载（M-C）：扫 ~/.nanami/plugins/ 下所有含 plugin.json 的子目录。
  * 单个插件失败只降级自身（warning 里留痕）。
  */
 export async function loadPlugins(): Promise<ExtensionLoad> {
@@ -183,7 +183,7 @@ export async function loadPlugins(): Promise<ExtensionLoad> {
 		plugins: [],
 		warnings: [],
 	};
-	const pluginsDir = join(NANMI_DIR, "plugins");
+	const pluginsDir = join(NANAMI_DIR, "plugins");
 	if (!existsSync(pluginsDir)) return out;
 	let entries: string[] = [];
 	try {

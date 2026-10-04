@@ -88,9 +88,9 @@ export interface NanmiConfig {
 	modelId: string;
 	/** 初始推理强度；缺省 = 模型默认。可被会话内 /api/thinking 随时覆盖 */
 	thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-	/** 编程注入的自定义 OpenAI 兼容端点（等价于 ~/.nanmi/config.json 的 customProviders） */
+	/** 编程注入的自定义 OpenAI 兼容端点（等价于 ~/.nanami/config.json 的 customProviders） */
 	customProviders?: CustomProviderConfig[];
-	/** 覆盖 ~/.nanmi/config.json 的用户配置（测试/嵌入用） */
+	/** 覆盖 ~/.nanami/config.json 的用户配置（测试/嵌入用） */
 	userConfig?: UserConfig;
 	systemPrompt: string;
 	cwd?: string;
