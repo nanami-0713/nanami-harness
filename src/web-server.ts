@@ -12,44 +12,19 @@
  * 可选配置文件 ./nanmi.web.json：{provider, modelId, systemPrompt, mcp, permissionMode}
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join, extname, dirname as pathDirname, resolve as pathResolve } from "node:path";
-import { NanmiHarness } from "./index.js";
-import { buildModels, catalog, loadUserConfig } from "./providers.js";
-import { CREDENTIALS_FILE, USER_CONFIG_FILE } from "./providers.js";
+import { join, dirname as pathDirname, resolve as pathResolve } from "node:path";
+// façade import（M·结构）：宿主只从包入口拿东西，不直接摸内部模块
+import { NanmiHarness, buildModels, loadUserConfig } from "./index.js";
+import { SessionStore } from "./index.js";
+import type { SessionStats } from "./index.js";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
+import { providerCatalog, revealConfigFile } from "./web-models.js";
+import { trackTiming, loadTiming } from "./web-timing.js";
+import { serveStatic } from "./web-static.js";
 
-const execFileAsync = promisify(execFileCb);
-
-/** 常用供应商的显示名（模型 tab 卡片用；缺省回退 providerName） */
-const PROVIDER_DISPLAY: Record<string, string> = {
-	"zai-coding-cn": "智谱 Coding", zai: "智谱开放", anthropic: "Anthropic", openai: "OpenAI",
-	"openai-codex": "OpenAI Codex", deepseek: "DeepSeek", google: "Google", "google-vertex": "Google Vertex",
-	"amazon-bedrock": "AWS Bedrock", "azure-openai-responses": "Azure OpenAI", groq: "Groq",
-	together: "Together", fireworks: "Fireworks", mistral: "Mistral", minimax: "MiniMax",
-	"minimax-cn": "MiniMax 国内", moonshotai: "Moonshot", "moonshotai-cn": "Moonshot 国内",
-	"kimi-coding": "Kimi Code", openrouter: "OpenRouter", xai: "xAI", "qwen-token-plan": "Qwen",
-	"qwen-token-plan-cn": "Qwen 国内", "qwen-token-plan-individual": "Qwen 个人",
-	huggingface: "HuggingFace", nvidia: "NVIDIA", cerebras: "Cerebras", baseten: "Baseten",
-	"github-copilot": "GitHub Copilot", opencode: "OpenCode", radius: "Radius", "ant-ling": "蚂蚁 Ling",
-	xiaomi: "小米", "vercel-ai-gateway": "Vercel Gateway", "cloudflare-ai-gateway": "Cloudflare Gateway",
-	"cloudflare-workers-ai": "Cloudflare Workers", "openai-responses": "OpenAI Responses",
-};
-
-/** 内置供应商 key 的 env 变量名（未配 key 时的指引；缺省按 <ID>_API_KEY 推测） */
-const PROVIDER_ENV: Record<string, string> = {
-	anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", deepseek: "DEEPSEEK_API_KEY",
-	google: "GEMINI_API_KEY", groq: "GROQ_API_KEY", openrouter: "OPENROUTER_API_KEY",
-	mistral: "MISTRAL_API_KEY", together: "TOGETHER_API_KEY", xai: "XAI_API_KEY",
-	fireworks: "FIREWORKS_API_KEY", "zai-coding-cn": "ZAI_CODING_CN_API_KEY", zai: "ZAI_API_KEY",
-	"kimi-coding": "KIMI_CODE_API_KEY", moonshotai: "MOONSHOT_API_KEY", "moonshotai-cn": "MOONSHOT_API_KEY",
-	"qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY", minimax: "MINIMAX_API_KEY", "minimax-cn": "MINIMAX_API_KEY",
-	togetherai: "TOGETHER_API_KEY", cerebras: "CEREBRAS_API_KEY", huggingface: "HF_API_KEY",
-};
 import type { NanmiConfig, PermissionMode } from "./types.js";
-import { SessionStore, type SessionStats } from "./session.js";
 import { resolveApiKey } from "./key.js";
 import { BUILTIN_TOOL_NAMES } from "./tools.js";
 
@@ -134,134 +109,6 @@ const ZERO_STATS: SessionStats = { llmMs: 0, toolMs: 0, ttftSum: 0, ttftN: 0, ge
  * 与单请求缓存命中率 = cacheRead / (input + cacheRead + cacheWrite)。
  * 记录同时落盘 <id>.trace.jsonl（append-only），重开会话轨迹不丢。
  */
-function isTokenDelta(e: Record<string, any> | undefined): boolean {
-	switch (e?.type) {
-		case "text_delta":
-		case "thinking_delta":
-			return String(e.delta ?? "") !== "";
-		case "toolcall_delta":
-			return String(e.delta ?? "") !== "";
-		case "toolcall_start":
-			// DSH 语义：工具名到达即算 token（argumentsDelta/name 首现）
-			return true;
-		default:
-			return false;
-	}
-}
-
-function trackTiming(reg: SessionReg, event: Record<string, any>): void {
-	const L = reg.live;
-	switch (event.type) {
-		case "message_start":
-			if ((event.message as { role?: string })?.role === "assistant") {
-				reg.curLlmStart = Date.now();
-				reg.curLlmFirstDelta = null;
-			}
-			break;
-		case "message_update":
-			if (
-				isTokenDelta(event.assistantMessageEvent) &&
-				reg.curLlmStart !== null &&
-				reg.curLlmFirstDelta === null
-			) {
-				reg.curLlmFirstDelta = Date.now();
-			}
-			break;
-		case "message_end": {
-			const m = event.message as {
-				role?: string; timestamp?: number; model?: string; provider?: string; stopReason?: string;
-				usage?: {
-					input?: number; output?: number; totalTokens?: number;
-					cacheRead?: number; cacheWrite?: number; reasoning?: number;
-				};
-			};
-			if (m?.role !== "assistant" || reg.curLlmStart === null) break;
-			const now = Date.now();
-			const llmMs = now - reg.curLlmStart;
-			let ttftMs = 0;
-			let genMs = 0;
-			if (reg.curLlmFirstDelta !== null) {
-				ttftMs = reg.curLlmFirstDelta - reg.curLlmStart;
-				genMs = now - reg.curLlmFirstDelta;
-				L.ttftSum += ttftMs;
-				L.ttftN++;
-				L.genMs += genMs;
-			}
-			L.llmMs += llmMs;
-			const u = m.usage ?? {};
-			const inTok = u.input ?? 0;
-			const cacheRead = u.cacheRead ?? 0;
-			const cacheWrite = u.cacheWrite ?? 0;
-			const out = u.output ?? 0;
-			L.outTok += out;
-			const denom = inTok + cacheRead + cacheWrite;
-			recordTiming(reg, `a:${m.timestamp ?? now}`, {
-				startTs: reg.curLlmStart,
-				endTs: now,
-				llmMs,
-				ttftMs,
-				genMs,
-				tokPerSec: genMs > 0 ? Math.round(((out / genMs) * 1000) * 10) / 10 : 0,
-				model: m.model,
-				provider: m.provider,
-				stopReason: m.stopReason,
-				inTok,
-				cacheRead,
-				cacheWrite,
-				outTok: out,
-				reasoningTok: u.reasoning ?? 0,
-				totalTokens: u.totalTokens,
-				cacheHitPct: denom > 0 ? Math.round((cacheRead / denom) * 1000) / 10 : 0,
-			});
-			reg.curLlmStart = null;
-			reg.curLlmFirstDelta = null;
-			break;
-		}
-		case "tool_execution_start":
-			reg.curToolStart.set(String(event.toolCallId), Date.now());
-			break;
-		case "tool_execution_end": {
-			const st = reg.curToolStart.get(String(event.toolCallId));
-			if (st !== undefined) {
-				const ms = Date.now() - st;
-				L.toolMs += ms;
-				recordTiming(reg, `t:${event.toolCallId}`, { startTs: st, endTs: st + ms, ms });
-				reg.curToolStart.delete(String(event.toolCallId));
-			}
-			break;
-		}
-	}
-}
-
-/** 计时记录：进内存 Map（/api/trace 即时读）+ 追加落盘 <id>.trace（重开恢复）。
- *  扩展名刻意不用 .jsonl —— 会话列表按 *.jsonl 枚举，别把副车当会话。 */
-function recordTiming(reg: SessionReg, key: string, record: Record<string, unknown>): void {
-	reg.traceTiming.set(key, record);
-	const store = reg.harness.sessionStore;
-	if (!store) return;
-	try {
-		appendFileSync(join(store.dir, `${reg.id}.trace`), `${JSON.stringify({ k: key, r: record })}\n`);
-	} catch (err) {
-		console.error(`[web:trace] 计时落盘失败: ${(err as Error).message}`);
-	}
-}
-
-/** 重开会话时从 <id>.trace 恢复计时记录（没有文件=旧会话，给空） */
-function loadTiming(store: { dir: string } | undefined, id: string): Map<string, Record<string, unknown>> {
-	const map = new Map<string, Record<string, unknown>>();
-	if (!store) return map;
-	try {
-		const text = readFileSync(join(store.dir, `${id}.trace`), "utf8");
-		for (const line of text.split("\n")) {
-			if (!line.trim()) continue;
-			try {
-				const { k, r } = JSON.parse(line) as { k?: string; r?: Record<string, unknown> };
-				if (k && r) map.set(k, r);
-			} catch { /* 脏行跳过 */ }
-		}
-	} catch { /* 文件不存在 */ }
-	return map;
-}
 
 const sessions = new Map<string, SessionReg>();
 
@@ -364,6 +211,13 @@ async function createSession(opts: {
 		trackTiming(reg, event);
 		emit(reg, { type: "agent", event });
 	});
+	// 防重：同一会话被再次 resume 时，先拆旧 reg（MCP 连接等资源）再顶替，
+	// 避免两个实例并发写同一 jsonl（append-only 下不丢条目，但会重复追加）
+	const prevReg = sessions.get(reg.id);
+	if (prevReg && prevReg !== reg) {
+		console.error(`[web] 会话 ${reg.id.slice(0, 8)} 被重复打开，拆除旧实例（pid 未变）`);
+		void prevReg.harness.dispose();
+	}
 	sessions.set(reg.id, reg);
 	return reg;
 }
@@ -384,28 +238,6 @@ async function readBody(req: IncomingMessage): Promise<any> {
 	}
 }
 
-const MIME: Record<string, string> = {
-	".html": "text/html; charset=utf-8",
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".svg": "image/svg+xml",
-	".png": "image/png",
-	".webmanifest": "application/manifest+json",
-};
-
-function serveStatic(pathname: string, res: ServerResponse): void {
-	const webDir = join(process.cwd(), "web");
-	const rel = pathname === "/" ? "index.html" : pathname.slice(1);
-	const file = join(webDir, rel);
-	if (!file.startsWith(webDir) || !existsSync(file)) {
-		res.writeHead(404).end("not found");
-		return;
-	}
-	res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream" });
-	res.end(readFileSync(file));
-}
-
-// ── 路由 ────────────────────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
 	const url = new URL(req.url ?? "/", `http://${HOST}`);
 	const pathname = url.pathname;
@@ -445,44 +277,18 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 
 	// GET /api/models —— 全供应商模型目录 + 可用性 + 管理面元数据（模型 tab 卡片与 composer 共用）
 	if (pathname === "/api/models" && req.method === "GET") {
-		const raw = await catalog(MODELS);
-		const customById = new Map((userConfig.customProviders ?? []).map((cp) => [cp.id, cp]));
-		const providers = raw.map((p) => {
-			const cp = customById.get(p.provider);
-			return {
-				...p,
-				providerName: PROVIDER_DISPLAY[p.provider] ?? cp?.name ?? p.providerName,
-				source: cp ? "custom" : "builtin",
-				// 未配 key 时展示该往哪个 env 写；自定义端点显示其 envVar
-				envHint: cp
-					? cp.envVar ?? `${cp.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`
-					: PROVIDER_ENV[p.provider] ?? `${p.provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`,
-			};
-		});
+		const decorated = await providerCatalog(MODELS, userConfig);
 		return json(res, 200, {
 			current: { provider: runtimeSettings.defaultProvider, modelId: runtimeSettings.defaultModelId },
-			files: {
-				config: USER_CONFIG_FILE,
-				credentials: CREDENTIALS_FILE,
-				credentialsExists: existsSync(CREDENTIALS_FILE),
-			},
-			providers,
+			...decorated,
 		});
 	}
 
 	// POST /api/reveal {target:"config"|"credentials"} —— 在 Finder 中显示配置文件（白名单）
 	if (pathname === "/api/reveal" && req.method === "POST") {
-		const allow = { config: USER_CONFIG_FILE, credentials: CREDENTIALS_FILE } as Record<string, string>;
-		const target = allow[String(body.target ?? "")];
-		if (!target) return json(res, 400, { error: "target 只能是 config 或 credentials" });
-		try {
-			// 文件还不存在（首次配置）时退回显示其父目录
-			const reveal = existsSync(target) ? target : pathDirname(target);
-			await execFileAsync("open", ["-R", reveal]);
-			return json(res, 200, { ok: true, path: target, revealed: reveal });
-		} catch (err) {
-			return json(res, 500, { error: `打开失败: ${(err as Error).message}` });
-		}
+		const revealed = await revealConfigFile(String(body.target ?? ""));
+		if (!revealed.ok) return json(res, 400, { error: revealed.error });
+		return json(res, 200, revealed);
 	}
 
 	// GET /api/folders —— 可选工作文件夹：服务根 + 历史会话用过的 cwd（去重、仍存在）
@@ -682,62 +488,61 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL): Pr
 		const steps: Record<string, unknown>[] = [];
 		let turn = 0;
 		let step = 0;
-		const textOf = (content: unknown) => {
+		const textOf = (content: string | (TextContent | ImageContent)[] | undefined) => {
 			if (typeof content === "string") return content;
 			return (Array.isArray(content) ? content : [])
 				.filter((b) => (b as { type?: string }).type === "text")
 				.map((b) => String((b as { text?: string }).text ?? ""))
 				.join("");
 		};
-		const results = new Map<string, Record<string, any>>();
+		const results = new Map<string, { content: (TextContent | ImageContent)[]; isError?: boolean }>();
 		for (const m of messages) {
-			const mm = m as { role?: string; toolCallId?: string; content?: unknown; timestamp?: number; isError?: boolean };
-			if (mm.role === "toolResult") results.set(mm.toolCallId!, mm);
+			if (m.role === "toolResult") results.set(m.toolCallId, { content: m.content, isError: m.isError });
 		}
 		for (const m of messages) {
-			const mm = m as { role?: string; content?: unknown; timestamp?: number; usage?: { totalTokens?: number } };
-			if (mm.role === "user") {
+			if (m.role === "user") {
 				turn++;
 				step = 0;
-				steps.push({ kind: "user", turn, text: textOf(mm.content), ts: mm.timestamp });
+				steps.push({ kind: "user", turn, text: textOf(m.content), ts: m.timestamp });
 				continue;
 			}
-		if (mm.role !== "assistant") continue;
-		const blocks = (Array.isArray(mm.content) ? mm.content : []) as Array<Record<string, any>>;
-		const thinking = blocks.filter((b) => b.type === "thinking").map((b) => String(b.thinking ?? "")).join("\n").trim();
-		const text = blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("").trim();
-		const calls = blocks.filter((b) => b.type === "toolCall");
-		step++;
-		steps.push({
-			kind: "assistant",
-			turn,
-			step,
-			text,
-			thinking: thinking || undefined,
-			model: (mm as { model?: string }).model,
-			provider: (mm as { provider?: string }).provider,
-			stopReason: (mm as { stopReason?: string }).stopReason,
-			tokens: mm.usage?.totalTokens,
-			timing: reg!.traceTiming.get(`a:${mm.timestamp}`),
-			toolOnly: text === "" && calls.length > 0,
-		});
-		for (const c of calls) {
+			if (m.role !== "assistant") continue;
+			// AgentMessage 联合原生收窄：assistant 分支自带 content 块/usage/model/stopReason
+			const blocks = m.content as Array<Record<string, any>>;
+			const thinking = blocks.filter((b) => b.type === "thinking").map((b) => String(b.thinking ?? "")).join("\n").trim();
+			const text = blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("").trim();
+			const calls = blocks.filter((b) => b.type === "toolCall");
 			step++;
-			const r = results.get(String(c.id));
-			const t = reg!.traceTiming.get(`t:${c.id}`) as { ms?: number; startTs?: number } | undefined;
 			steps.push({
-				kind: "tool",
+				kind: "assistant",
 				turn,
 				step,
-				name: c.name,
-				args: c.arguments,
-				toolCallId: c.id,
-				resultText: r ? textOf(r.content) : undefined,
-				isError: r ? (r as { isError?: boolean }).isError : undefined,
-				ms: t?.ms,
-				startTs: t?.startTs,
+				text,
+				thinking: thinking || undefined,
+				model: m.model,
+				provider: m.provider,
+				stopReason: m.stopReason,
+				tokens: m.usage?.totalTokens,
+				timing: reg!.traceTiming.get(`a:${m.timestamp}`),
+				toolOnly: text === "" && calls.length > 0,
 			});
-		}
+			for (const c of calls) {
+				step++;
+				const r = results.get(String(c.id));
+				const t = reg!.traceTiming.get(`t:${c.id}`) as { ms?: number; startTs?: number } | undefined;
+				steps.push({
+					kind: "tool",
+					turn,
+					step,
+					name: c.name,
+					args: c.arguments,
+					toolCallId: c.id,
+					resultText: r ? textOf(r.content) : undefined,
+					isError: r?.isError,
+					ms: t?.ms,
+					startTs: t?.startTs,
+				});
+			}
 		}
 		return json(res, 200, { steps });
 	}

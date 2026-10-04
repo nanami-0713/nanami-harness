@@ -12,8 +12,19 @@
  * 非交互（interactive:false）一律 deny —— fail-closed，绝不静默放行。
  */
 import { createInterface } from "node:readline/promises";
+import { resolve, sep } from "node:path";
 import type { PermissionConfig, PermissionMode } from "./types.js";
 import { isReadonlyTool } from "./tools.js";
+
+/**
+ * 目录包含判定（路径穿越防护）：resolve 规范化 `..` 后按分隔符边界比较，
+ * 防 `cwd/../../etc` 这类字符串前缀绕过（cwd=/a/b 时 /a/b2 不算内、/a/b/../c 不算内）。
+ */
+function isInsideDir(path: string, dir: string): boolean {
+	const resolved = resolve(path);
+	const base = resolve(dir);
+	return resolved === base || resolved.startsWith(base + sep);
+}
 
 /** 高危 bash 命令模式：即使在 acceptEdits 下也要在理由里点名 */
 const DANGEROUS_BASH: RegExp[] = [
@@ -80,7 +91,7 @@ export class PermissionGate {
 		if (this.mode === "acceptEdits" && (toolName === "edit" || toolName === "write")) {
 			const path = (args as { file_path?: string; path?: string })?.file_path
 				?? (args as { path?: string })?.path;
-			if (path && !path.startsWith(this.cwd)) {
+			if (path && !isInsideDir(path, this.cwd)) {
 				return { decision: "ask", reason: `写入目标在 cwd 之外：${path}` };
 			}
 			return { decision: "allow" };

@@ -14,7 +14,7 @@
  *      物理（physical）= 全部消息条目（含被摘要替换的史前史，计费/审计口径）
  *  - 兼容 v1 旧文件（首行 meta + 纯消息行，无 ckpt/sidecar）：可读；首次 sync 会原地升级。
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { SessionStats } from "./types.js";
@@ -61,6 +61,8 @@ export class SessionStore {
 	private view: AgentMessage[] = [];
 	/** 已落库的物理消息条目数 */
 	private physicalCount = 0;
+	/** 追加前是否需要补换行：null=未探测（首次追加时查一次），之后恒 false（每行以 \n 收尾） */
+	private tailNeedsNewline: boolean | null = null;
 
 	static create(dir: string, provider: string, modelId: string, cwd: string): SessionStore {
 		mkdirSync(dir, { recursive: true });
@@ -119,14 +121,23 @@ export class SessionStore {
 		const file = join(dir, `${id}.jsonl`);
 		if (!existsSync(file)) return undefined;
 		const lines = readFileSync(file, "utf8").split("\n").filter((l) => l.trim() !== "");
-		// v1 旧文件首行是 meta（无 k 字段）；v2 首行是条目（有 k），meta 在 sidecar
-		const firstParsed = JSON.parse(lines[0]!) as Entry & { id?: string };
-		const legacy = firstParsed.k === undefined;
+		// 容忍脏行：崩溃截断的尾行（写一半）只丢该条，不能让整个会话无法加载。
+		// parse 失败的行跳过；首行都脏则按 v2 空会话处理（meta 走 sidecar/合成）。
+		const parseLine = (line: string): (Entry & Record<string, unknown>) | undefined => {
+			try {
+				return JSON.parse(line) as Entry & Record<string, unknown>;
+			} catch {
+				return undefined;
+			}
+		};
+		const firstParsed = parseLine(lines[0] ?? "") as (Entry & { id?: string }) | undefined;
+		const legacy = firstParsed?.k === undefined && firstParsed !== undefined;
 		const meta = readMeta(dir, id, lines);
 		const view: AgentMessage[] = [];
 		const physical: AgentMessage[] = [];
 	for (const line of lines.slice(legacy ? 1 : 0)) {
-		const parsed = JSON.parse(line) as Entry & Record<string, unknown>;
+		const parsed = parseLine(line);
+		if (!parsed) continue;
 		// v1 行是裸 AgentMessage（无 k 包装），v2 行是 {k,m} —— 上次回归的根因，勿删这段兼容
 		const isCkpt = (parsed as Entry).k === "ckpt";
 		const msg = isCkpt || parsed.k === "msg" ? (parsed as Entry).m! : (parsed as unknown as AgentMessage);
@@ -206,11 +217,15 @@ export class SessionStore {
 	private appendEntries(entries: Entry[]): void {
 		if (entries.length === 0) return;
 		const file = join(this.dir, `${this.id}.jsonl`);
-		const prev = existsSync(file) ? readFileSync(file, "utf8") : "";
 		const lines = entries.map((e) => JSON.stringify(e)).join("\n");
-		const tmp = `${file}.tmp`;
-		writeFileSync(tmp, prev + (prev && !prev.endsWith("\n") ? "\n" : "") + lines + "\n");
-		renameSync(tmp, file);
+		// 真·追加（O_APPEND）：读-改-写全文件在多进程并发同会话时会丢条目，且 O(n²) I/O。
+		// 尾部换行只查一次（load 时已读全文）；此后每次写入都以 \n 收尾，无需再查。
+		if (this.tailNeedsNewline === null) {
+			this.tailNeedsNewline = existsSync(file) && !readFileSync(file, "utf8").endsWith("\n");
+		}
+		const prefix = this.tailNeedsNewline ? "\n" : "";
+		appendFileSync(file, prefix + lines + "\n");
+		this.tailNeedsNewline = false;
 		for (const e of entries) {
 			if (e.k === "msg") {
 				this.physicalCount++;
@@ -235,12 +250,22 @@ export class SessionStore {
 
 function readMeta(dir: string, id: string, lines?: string[]): SessionMeta {
 	const sidecar = join(dir, `${id}.meta.json`);
-	if (existsSync(sidecar)) return JSON.parse(readFileSync(sidecar, "utf8")) as SessionMeta;
-	// v1 兼容：首行就是 meta
+	if (existsSync(sidecar)) {
+		try {
+			return JSON.parse(readFileSync(sidecar, "utf8")) as SessionMeta;
+		} catch {
+			// sidecar 损坏：走合成兜底
+		}
+	}
+	// v1 兼容：首行就是 meta；首行缺失/脏/为 v2 条目/损坏时一律合成最小 meta
 	const first = (lines ?? readFileSync(join(dir, `${id}.jsonl`), "utf8").split("\n"))[0]!;
-	const parsed = JSON.parse(first) as SessionMeta & { k?: string };
-	if (parsed.k !== undefined) {
-		// v2 文件但 sidecar 丢失：合成最小 meta
+	let parsed: (SessionMeta & { k?: string }) | undefined;
+	try {
+		parsed = JSON.parse(first) as SessionMeta & { k?: string };
+	} catch {
+		parsed = undefined;
+	}
+	if (!parsed || parsed.k !== undefined) {
 		return { id, provider: "?", modelId: "?", cwd: "?", createdAt: "", updatedAt: "", messageCount: 0 };
 	}
 	return parsed;

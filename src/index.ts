@@ -32,7 +32,7 @@ import { createJevTool } from "./tools-jev.js";
 import { createTodoTool } from "./tools-todo.js";
 import type { NanmiConfig, RunResult, PermissionMode, HookConfig } from "./types.js";
 
-export type { NanmiConfig, RunResult, PermissionMode, JevConfig, HookConfig, ComputerConfig } from "./types.js";
+export type { NanmiConfig, RunResult, PermissionMode, JevConfig, HookConfig, ComputerConfig, SessionStats } from "./types.js";
 export type { CustomProviderConfig, UserConfig } from "./providers.js";
 export { loadUserConfig, loadCredentialsIntoEnv, buildModels, catalog } from "./providers.js";
 export { loadMcpServers, loadPlugins, loadExtensions, type PluginManifest } from "./plugins.js";
